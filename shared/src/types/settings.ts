@@ -1,7 +1,13 @@
+import {
+  TYPST_THEME_LABELS,
+  TYPST_THEME_VALUES,
+} from "../generated/typst-themes";
 import type {
   LocationMatchStrictness,
   LocationSearchScope,
 } from "../location-preferences";
+
+export { TYPST_THEME_LABELS, TYPST_THEME_VALUES };
 
 export interface ResumeProjectCatalogItem {
   id: string;
@@ -49,12 +55,15 @@ export type LlmPurposeOverrides = Partial<
 export type LlmPurposeApiKeys = Partial<Record<LlmPurpose, string | null>>;
 export type LlmPurposeApiKeyHints = Partial<Record<LlmPurpose, string | null>>;
 
-export const PDF_RENDERER_VALUES = ["rxresume", "latex"] as const;
+export const PDF_RENDERER_VALUES = ["rxresume", "latex", "typst"] as const;
 export type PdfRenderer = (typeof PDF_RENDERER_VALUES)[number];
 export const PDF_RENDERER_LABELS: Record<PdfRenderer, string> = {
   rxresume: "RxResume export",
   latex: "Local LaTeX (Jake template)",
+  typst: "Local Typst",
 };
+
+export type TypstTheme = (typeof TYPST_THEME_VALUES)[number];
 
 export const CHAT_STYLE_LANGUAGE_MODE_VALUES = [
   "manual",
@@ -199,6 +208,7 @@ export interface AppSettings {
   jobCompleteWebhookUrl: Resolved<string>;
   resumeProjects: Resolved<ResumeProjectsSettings>;
   pdfRenderer: Resolved<PdfRenderer>;
+  typstTheme: Resolved<TypstTheme>;
   ukvisajobsMaxJobs: Resolved<number>;
   adzunaMaxJobsPerTerm: Resolved<number>;
   gradcrackerMaxJobsPerTerm: Resolved<number>;
