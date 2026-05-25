@@ -534,8 +534,8 @@ export const JobPage: React.FC = () => {
         : null))
     : null;
   const isClosedStage = currentStage === "closed";
-  const canTrackStages = job?.status === "in_progress";
-  const canLogEvents = canTrackStages && !isClosedStage;
+  const isInProgress = job?.status === "in_progress";
+  const canLogEvents = isInProgress && !isClosedStage;
   const jobLink = job ? job.applicationLink || job.jobUrl : null;
   const isBusy = activeAction !== null;
   const isRegeneratingPdf = isPdfRegenerating(job);
@@ -548,7 +548,6 @@ export const JobPage: React.FC = () => {
   const isDiscovered = job?.status === "discovered";
   const isReady = job?.status === "ready";
   const isApplied = job?.status === "applied";
-  const isInProgress = job?.status === "in_progress";
   const baseJobPath = id ? `/job/${id}` : "";
   const latestNote = notes[0] ?? null;
   const latestEvent = events.at(-1) ?? null;
@@ -876,20 +875,20 @@ export const JobPage: React.FC = () => {
                   </div>
                 </div>
                 <div className="p-4">
-                  {!canTrackStages && (
+                  {!isInProgress && (
                     <div className="mb-4 rounded-md border border-dashed border-border/60 p-3 text-sm text-muted-foreground">
                       Move this job to In Progress to track application stages.
                     </div>
                   )}
-                  {canTrackStages && isClosedStage && (
+                  {isInProgress && isClosedStage && (
                     <div className="mb-4 rounded-md border border-dashed border-border/60 p-3 text-sm text-muted-foreground">
                       This application is closed. Stage logging is disabled.
                     </div>
                   )}
                   <JobTimeline
                     events={events}
-                    onEdit={canLogEvents ? handleEditEvent : undefined}
-                    onDelete={canLogEvents ? confirmDeleteEvent : undefined}
+                    onEdit={isInProgress ? handleEditEvent : undefined}
+                    onDelete={isInProgress ? confirmDeleteEvent : undefined}
                   />
                 </div>
               </section>
