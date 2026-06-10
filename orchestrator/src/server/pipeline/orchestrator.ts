@@ -68,8 +68,6 @@ const DEFAULT_CONFIG: PipelineConfig = {
   enableAutoTailoring: true,
 };
 
-const PROJECT_SELECTION_TRACE = "PROJECT_SELECTION_TRACE";
-
 function parseProjectIdsCsv(value: string | null | undefined): string[] {
   if (!value) return [];
   const seen = new Set<string>();
@@ -656,22 +654,7 @@ export async function summarizeJob(
       // 2. Suggest Projects
       let selectedProjectIds = job.selectedProjectIds;
       const existingSelectedProjectIds = parseProjectIdsCsv(selectedProjectIds);
-      jobLogger.info(`${PROJECT_SELECTION_TRACE} project selection gate`, {
-        marker: PROJECT_SELECTION_TRACE,
-        phase: "summarizeJob.gate",
-        shouldUpdateAllTailoring,
-        hasExistingSelectedProjectIds: existingSelectedProjectIds.length > 0,
-        existingSelectedProjectCount: existingSelectedProjectIds.length,
-        existingSelectedProjectIds,
-        force: Boolean(options?.force),
-        requestedFields: requestedFields ?? null,
-      });
       if (shouldUpdateAllTailoring) {
-        jobLogger.info(`${PROJECT_SELECTION_TRACE} selecting projects`, {
-          marker: PROJECT_SELECTION_TRACE,
-          phase: "summarizeJob.start",
-          force: Boolean(options?.force),
-        });
         try {
           const { catalog, selectionItems } =
             extractProjectsFromProfile(profile);
@@ -709,38 +692,10 @@ export async function summarizeJob(
             disallowedExistingProjectIds.length === 0 &&
             missingLockedProjectIds.length === 0 &&
             !existingSelectionExceedsMax;
-          jobLogger.info(`${PROJECT_SELECTION_TRACE} resolved candidates`, {
-            marker: PROJECT_SELECTION_TRACE,
-            phase: "summarizeJob.candidates",
-            catalogCount: catalog.length,
-            selectionItemCount: selectionItems.length,
-            hasResumeProjectsOverride: Boolean(overrideResumeProjectsRaw),
-            maxProjects: resumeProjects.maxProjects,
-            lockedProjectCount: locked.length,
-            lockedProjectIds: locked,
-            aiSelectableProjectCount:
-              resumeProjects.aiSelectableProjectIds.length,
-            aiSelectableProjectIds: resumeProjects.aiSelectableProjectIds,
-            desiredCount,
-            eligibleProjectCount: eligibleProjects.length,
-            eligibleProjectIds: eligibleProjects.map((project) => project.id),
-            existingSelectionValid,
-            disallowedExistingProjectIds,
-            missingLockedProjectIds,
-            existingSelectionExceedsMax,
-          });
 
           let picked: string[] = [];
           if (existingSelectionValid && !options?.force) {
             selectedProjectIds = existingSelectedProjectIds.join(",");
-            jobLogger.info(
-              `${PROJECT_SELECTION_TRACE} kept existing selection`,
-              {
-                marker: PROJECT_SELECTION_TRACE,
-                phase: "summarizeJob.keptExisting",
-                existingSelectedProjectIds,
-              },
-            );
           } else {
             picked = await pickProjectIdsForJob({
               jobDescription: job.jobDescription || "",
@@ -750,33 +705,9 @@ export async function summarizeJob(
 
             selectedProjectIds = [...locked, ...picked].join(",");
           }
-          jobLogger.info(`${PROJECT_SELECTION_TRACE} saved project selection`, {
-            marker: PROJECT_SELECTION_TRACE,
-            phase: "summarizeJob.saved",
-            pickedProjectCount: picked.length,
-            pickedProjectIds: picked,
-            finalSelectedProjectIds: selectedProjectIds,
-            finalSelectedProjectCount: selectedProjectIds
-              .split(",")
-              .filter(Boolean).length,
-          });
         } catch (error) {
-          jobLogger.warn(
-            `${PROJECT_SELECTION_TRACE} failed to suggest projects`,
-            {
-              marker: PROJECT_SELECTION_TRACE,
-              phase: "summarizeJob.error",
-              error,
-            },
-          );
+          jobLogger.warn("Failed to suggest projects", { error });
         }
-      } else {
-        jobLogger.info(`${PROJECT_SELECTION_TRACE} skipped project selection`, {
-          marker: PROJECT_SELECTION_TRACE,
-          phase: "summarizeJob.skipped",
-          reason: "field-specific-generation",
-          existingSelectedProjectIds: selectedProjectIds ?? null,
-        });
       }
 
       await jobsRepo.updateJob(job.id, {
