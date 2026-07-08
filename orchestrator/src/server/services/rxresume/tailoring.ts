@@ -10,10 +10,17 @@ export type TailoredSkillsInput =
   | null
   | undefined;
 
+export type TailoredExperienceInput =
+  | Array<{ company: string; bullets: string[] }>
+  | string
+  | null
+  | undefined;
+
 export type TailorChunkInput = {
   headline?: string | null;
   summary?: string | null;
   skills?: TailoredSkillsInput;
+  experience?: TailoredExperienceInput;
 };
 
 export type ResumeProjectSelectionItem = ResumeProjectCatalogItem & {
@@ -256,4 +263,75 @@ export function applyTailoredChunks(args: {
   applyTailoredSkills(args.resumeData, args.tailoredContent.skills);
   applyTailoredSummary(args.resumeData, args.tailoredContent.summary);
   applyTailoredHeadline(args.resumeData, args.tailoredContent.headline);
+  applyTailoredExperience(args.resumeData, args.tailoredContent.experience);
+}
+
+function parseTailoredExperience(
+  input: TailoredExperienceInput,
+): Array<{ company: string; bullets: string[] }> | null {
+  const parsed =
+    typeof input === "string"
+      ? (() => {
+          try {
+            return JSON.parse(input);
+          } catch {
+            return null;
+          }
+        })()
+      : input;
+  if (!Array.isArray(parsed)) return null;
+  const entries = parsed.filter(
+    (e): e is { company: string; bullets: string[] } =>
+      Boolean(e) &&
+      typeof e.company === "string" &&
+      Array.isArray(e.bullets) &&
+      e.bullets.every((b: unknown) => typeof b === "string"),
+  );
+  return entries.length > 0 ? entries : null;
+}
+
+function normalizeCompanyKey(value: unknown): string {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, " ").trim().toLowerCase()
+    : "";
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function formatBullets(bullets: string[], originalDescription: string): string {
+  if (/<li/i.test(originalDescription)) {
+    return `<ul>${bullets
+      .map((b) => `<li><p>${escapeHtml(b)}</p></li>`)
+      .join("")}</ul>`;
+  }
+  return bullets.join("\n");
+}
+
+/** Replace experience bullets (by item id) with the vetted tailored bullets. */
+export function applyTailoredExperience(
+  resumeData: RecordLike,
+  input: TailoredExperienceInput,
+): void {
+  const entries = parseTailoredExperience(input);
+  if (!entries) return;
+  const sections = asRecord(resumeData.sections);
+  const items = asArray(asRecord(sections?.experience)?.items);
+  if (!items) return;
+  const byCompany = new Map(
+    entries.map((e) => [normalizeCompanyKey(e.company), e.bullets]),
+  );
+  for (const raw of items) {
+    const item = asRecord(raw);
+    if (!item) continue;
+    const bullets = byCompany.get(normalizeCompanyKey(item.company));
+    if (!bullets || bullets.length === 0) continue;
+    const original =
+      typeof item.description === "string" ? item.description : "";
+    item.description = formatBullets(bullets, original);
+  }
 }

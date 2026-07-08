@@ -20,6 +20,8 @@ vi.mock("./services/pdf-fingerprint", () => ({
     designResumeUpdatedAt: null,
     pdfRenderer: "latex",
     typstTheme: "classic",
+    latexTheme: "jake",
+    latexProjectLinkStyle: "icon",
     rxresumeBaseResumeId: null,
   }),
 }));
@@ -37,6 +39,8 @@ describe("Tailoring Flow", () => {
       designResumeUpdatedAt: null,
       pdfRenderer: "latex",
       typstTheme: "classic",
+      latexTheme: "jake",
+      latexProjectLinkStyle: "icon",
       rxresumeBaseResumeId: null,
     });
     vi.mocked(jobsRepo.finalizeGeneratedPdfIfCurrent).mockResolvedValue(
@@ -96,7 +100,7 @@ describe("Tailoring Flow", () => {
     );
     expect(jobsRepo.finalizeGeneratedPdfIfCurrent).toHaveBeenCalledWith({
       id: "job-tailored-123",
-      expectedStatus: "processing",
+      expectedStatus: "discovered",
       requireGeneratedSource: false,
       pdfPath: "generated/path/resume.pdf",
       pdfFingerprint: "test-pdf-fingerprint",
@@ -106,7 +110,7 @@ describe("Tailoring Flow", () => {
       "resume_generated",
       expect.objectContaining({
         renderer: "latex",
-        theme: null,
+        theme: "jake",
       }),
       expect.objectContaining({
         urlPath: "/jobs",
@@ -149,7 +153,7 @@ describe("Tailoring Flow", () => {
     expect(jobsRepo.finalizeGeneratedPdfIfCurrent).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "job-raw-456",
-        expectedStatus: "processing",
+        expectedStatus: "discovered",
         requireGeneratedSource: false,
       }),
     );
@@ -259,7 +263,7 @@ describe("Tailoring Flow", () => {
     expect(jobsRepo.updateJob).toHaveBeenNthCalledWith(
       1,
       "job-discovered-bad-skills",
-      { status: "processing", pdfRegenerating: true },
+      { pdfRegenerating: true },
     );
     expect(jobsRepo.updateJob).toHaveBeenNthCalledWith(
       2,

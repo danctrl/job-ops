@@ -1,5 +1,6 @@
 import { TokenizedInput } from "@client/pages/orchestrator/TokenizedInput";
 import type {
+  Job,
   ResumeProjectCatalogItem,
   ResumeProjectsSettings,
 } from "@shared/types.js";
@@ -15,7 +16,7 @@ import {
   Undo2,
 } from "lucide-react";
 import type React from "react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Tip } from "@/client/components/Tip";
 import {
   Accordion,
@@ -28,6 +29,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ProjectSelector } from "../discovered-panel/ProjectSelector";
 import type { EditableSkillGroup } from "../tailoring-utils";
+import { CoverLetterEditor } from "./CoverLetterEditor";
 
 interface TailoringSectionsProps {
   catalog: ResumeProjectCatalogItem[];
@@ -75,6 +77,13 @@ interface TailoringSectionsProps {
   onRemoveSkillGroup: (id: string) => void;
   onToggleProject: (id: string) => void;
   onTracerLinksEnabledChange: (value: boolean) => void;
+  job: Job;
+  onCoverLetterUpdate?: (job: Job) => void | Promise<void>;
+  // When true, open the cover-letter accordion (e.g. from the "Add cover
+  // letter" apply prompt), then call onCoverLetterFocusConsumed to clear it.
+  focusCoverLetter?: boolean;
+  onCoverLetterFocusConsumed?: () => void;
+  onRegisterCoverLetterBuild?: (build: (() => Promise<void>) | null) => void;
 }
 
 type SectionState =
@@ -101,9 +110,9 @@ type NoSelectedProjectsInfoCopy = {
   description: string;
 };
 
-const sectionClass =
+export const sectionClass =
   "overflow-hidden rounded-md border border-border/55 bg-background/25 px-0 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]";
-const triggerClass =
+export const triggerClass =
   "min-h-11 px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted/20 hover:no-underline data-[state=open]:border-b data-[state=open]:border-border/45";
 const inputClass =
   "w-full rounded-md border border-border/60 bg-background/65 px-3 py-2 text-sm leading-6 ring-offset-background placeholder:text-muted-foreground/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
@@ -255,7 +264,7 @@ export function getNoSelectedProjectsInfo(args: {
   };
 }
 
-const SectionTriggerLabel: React.FC<{
+export const SectionTriggerLabel: React.FC<{
   title: string;
   state: SectionState;
   badgeLabel?: string;
@@ -360,10 +369,29 @@ export const TailoringSections: React.FC<TailoringSectionsProps> = ({
   onRemoveSkillGroup,
   onToggleProject,
   onTracerLinksEnabledChange,
+  job,
+  onCoverLetterUpdate,
+  focusCoverLetter = false,
+  onCoverLetterFocusConsumed,
+  onRegisterCoverLetterBuild,
 }) => {
   const [keywordDrafts, setKeywordDrafts] = useState<Record<string, string>>(
     {},
   );
+  // Controlled accordion so the cover-letter section can be opened on demand.
+  // Seed open on mount (the tab unmounts when inactive, so a request that
+  // arrives via tab-switch is only visible as the initial prop value).
+  const [openSections, setOpenSections] = useState<string[]>(() =>
+    focusCoverLetter ? ["cover-letter"] : [],
+  );
+  // Also handle the already-mounted case, then clear the one-shot request.
+  useEffect(() => {
+    if (!focusCoverLetter) return;
+    setOpenSections((prev) =>
+      prev.includes("cover-letter") ? prev : [...prev, "cover-letter"],
+    );
+    onCoverLetterFocusConsumed?.();
+  }, [focusCoverLetter, onCoverLetterFocusConsumed]);
   const tracerToggleDisabled =
     disableInputs || (!tracerLinksEnabled && tracerEnableBlocked);
   const generateTooltip = "Generate";
@@ -385,7 +413,12 @@ export const TailoringSections: React.FC<TailoringSectionsProps> = ({
   });
 
   return (
-    <Accordion type="multiple" className="space-y-2">
+    <Accordion
+      type="multiple"
+      className="space-y-2"
+      value={openSections}
+      onValueChange={setOpenSections}
+    >
       <AccordionItem value="summary" className={sectionClass}>
         <AccordionTrigger className={triggerClass} aria-label="Summary">
           <SectionTriggerLabel
@@ -795,6 +828,13 @@ export const TailoringSections: React.FC<TailoringSectionsProps> = ({
           />
         </AccordionContent>
       </AccordionItem>
+
+      <CoverLetterEditor
+        job={job}
+        onUpdate={onCoverLetterUpdate}
+        autoGenerate={focusCoverLetter}
+        onRegisterBuild={onRegisterCoverLetterBuild}
+      />
     </Accordion>
   );
 };

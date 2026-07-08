@@ -3,18 +3,13 @@ import { useProfile } from "@client/hooks/useProfile";
 import { useSettings } from "@client/hooks/useSettings";
 import { useTracerReadiness } from "@client/hooks/useTracerReadiness";
 import type { Job } from "@shared/types.js";
-import {
-  Check,
-  CircleAlert,
-  FileText,
-  Loader2,
-  RefreshCcw,
-} from "lucide-react";
+import { Check, CircleAlert, Loader2, Sparkles } from "lucide-react";
 import type React from "react";
 import type { ComponentProps } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Tip } from "@/client/components/Tip";
+import { TooltipWhenDisabled } from "@/client/components/TooltipWhenDisabled";
 import { formatUserFacingError } from "@/client/lib/error-format";
 import { showErrorToast } from "@/client/lib/error-toast";
 import { Button } from "@/components/ui/button";
@@ -37,12 +32,18 @@ import {
 interface TailoringWorkspaceBaseProps {
   job: Job;
   onDirtyChange?: (isDirty: boolean) => void;
+  // When true, open the cover-letter accordion section (e.g. from the apply
+  // prompt), then call onCoverLetterFocusConsumed to clear the request.
+  focusCoverLetter?: boolean;
+  onCoverLetterFocusConsumed?: () => void;
 }
 
 interface TailoringWorkspaceEditorProps extends TailoringWorkspaceBaseProps {
   mode: "editor";
   onUpdate: () => void | Promise<void>;
   onRegisterSave?: (save: () => Promise<void>) => void;
+  onRegisterBuildPdf?: (build: (() => Promise<void>) | null) => void;
+  onRegisterCoverLetterBuild?: (build: (() => Promise<void>) | null) => void;
   onBeforeGenerate?: () => boolean | Promise<boolean>;
 }
 
@@ -247,6 +248,7 @@ export const TailoringWorkspace: React.FC<TailoringWorkspaceProps> = (
       return;
     }
 
+    let didSave = false;
     const savePromise = (async () => {
       try {
         do {
@@ -265,6 +267,7 @@ export const TailoringWorkspace: React.FC<TailoringWorkspaceProps> = (
           if (isMountedRef.current) setAutosaveStatus("saving");
           const snapshotKey = getTailoringSavePayloadKey(snapshot);
           const updatedJob = await api.updateJob(props.job.id, snapshot);
+          didSave = true;
           if (!isMountedRef.current) return;
           const updatedPayload = toSavePayloadFromJob(updatedJob);
 
@@ -308,7 +311,13 @@ export const TailoringWorkspace: React.FC<TailoringWorkspaceProps> = (
 
     saveInFlightRef.current = savePromise;
     await savePromise;
-  }, [markSavedJob, markSavedSnapshot, props.job.id]);
+    // Notify the parent so selectedJob's resumeFreshness re-derives (PDF goes
+    // stale on edits) — keeps the Final-check/Build-PDF CTA consistent with the
+    // cover-letter editor, which already refreshes on save.
+    if (didSave) {
+      void props.onUpdate();
+    }
+  }, [markSavedJob, markSavedSnapshot, props.job.id, props.onUpdate]);
 
   const flushAutosave = useCallback(async () => {
     if (autosaveTimerRef.current) {
@@ -435,6 +444,11 @@ export const TailoringWorkspace: React.FC<TailoringWorkspaceProps> = (
     }
   }, [props.onBeforeGenerate, props.onUpdate, flushAutosave, props.job.id]);
 
+  useEffect(() => {
+    props.onRegisterBuildPdf?.(handleGeneratePdf);
+    return () => props.onRegisterBuildPdf?.(null);
+  }, [props.onRegisterBuildPdf, handleGeneratePdf]);
+
   const handleUndoSummary = useCallback(() => {
     setSummary(originalValues.summary);
   }, [originalValues.summary, setSummary]);
@@ -461,9 +475,28 @@ export const TailoringWorkspace: React.FC<TailoringWorkspaceProps> = (
     );
   }, [aiBaseline.skillsJson, setSkillsDraft]);
 
-  const disableInputs = Boolean(generateTarget) || isGeneratingPdf;
+  // Once applied (or further), the application is sent — lock tailoring so it
+  // can't be edited or rebuilt. Rebuilding would also flip the job back to
+  // "ready" (the PDF commit sets status: ready), bouncing it out of Applied.
+  const isPostApplication =
+    props.job.status === "applied" || props.job.status === "in_progress";
+  const appliedLockReason = isPostApplication
+    ? "This job is already applied — tailoring is locked. You can still monitor it and ask the assistant."
+    : null;
+  // A custom-uploaded resume makes the tailored sections moot (they only feed a
+  // generated PDF); an applied job is locked. Either way, make inputs read-only.
+  const disableInputs =
+    Boolean(generateTarget) ||
+    isGeneratingPdf ||
+    props.job.pdfSource === "uploaded" ||
+    Boolean(appliedLockReason);
   const isDraftReady = textHasValue(summary) && textHasValue(headline);
-
+  // A custom-uploaded resume can't be overwritten, and an applied job is locked;
+  // both block tailoring (AI) and PDF generation, so surface one shared reason.
+  const generateResumeReason =
+    props.job.pdfSource === "uploaded"
+      ? "You uploaded a custom resume. Delete it in Documents to tailor and generate from your content."
+      : appliedLockReason;
   const tailoringSectionsProps = useMemo<TailoringSectionsProps>(
     () => ({
       catalog,
@@ -517,6 +550,11 @@ export const TailoringWorkspace: React.FC<TailoringWorkspaceProps> = (
       onRemoveSkillGroup: handleRemoveSkillGroup,
       onToggleProject: handleToggleProject,
       onTracerLinksEnabledChange: setTracerLinksEnabled,
+      job: props.job,
+      onCoverLetterUpdate: props.onUpdate,
+      focusCoverLetter: props.focusCoverLetter,
+      onCoverLetterFocusConsumed: props.onCoverLetterFocusConsumed,
+      onRegisterCoverLetterBuild: props.onRegisterCoverLetterBuild,
     }),
     [
       catalog,
@@ -557,6 +595,11 @@ export const TailoringWorkspace: React.FC<TailoringWorkspaceProps> = (
       handleRemoveSkillGroup,
       handleToggleProject,
       setTracerLinksEnabled,
+      props.job,
+      props.onUpdate,
+      props.focusCoverLetter,
+      props.onCoverLetterFocusConsumed,
+      props.onRegisterCoverLetterBuild,
     ],
   );
 
@@ -590,43 +633,43 @@ export const TailoringWorkspace: React.FC<TailoringWorkspaceProps> = (
               </p>
               <p className="mt-0.5 text-[11px] text-muted-foreground/75">
                 {isDraftReady
-                  ? "Review optional sections before generating the PDF."
-                  : "Add a summary and headline to generate the PDF."}
+                  ? "Review optional sections before building the PDF."
+                  : "Generate Sections before building the PDF."}
               </p>
             </div>
           </div>
-          <AutosaveStatusIcon status={autosaveStatus} />
+          {/* The idle "Saved" tick is misleading on an incomplete draft where
+              nothing has been generated yet — only show it once the draft is
+              ready. Saving/unsaved/error feedback still shows while editing. */}
+          {isDraftReady || autosaveStatus !== "saved" ? (
+            <AutosaveStatusIcon status={autosaveStatus} />
+          ) : null}
         </div>
 
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+        {/* Single full-width Generate. Build PDF lives in the inspector header
+            CTA now, so the second footer button would be redundant. */}
+        <TooltipWhenDisabled
+          reason={generateResumeReason}
+          className="h-full w-full"
+        >
           <Button
             onClick={handleSummarizeEditor}
-            disabled={Boolean(generateTarget) || isGeneratingPdf}
+            className="h-full min-h-11 w-full text-sm"
+            disabled={
+              Boolean(generateTarget) ||
+              isGeneratingPdf ||
+              Boolean(generateResumeReason)
+            }
             variant="outline"
-            size="sm"
           >
             {generateTarget === "all" ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              <RefreshCcw className="h-4 w-4" />
+              <Sparkles className="h-4 w-4" />
             )}
-            Generate all
+            Generate
           </Button>
-          <Button
-            onClick={handleGeneratePdf}
-            disabled={
-              Boolean(generateTarget) || isGeneratingPdf || !isDraftReady
-            }
-            size="sm"
-          >
-            {isGeneratingPdf ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <FileText className="h-4 w-4" />
-            )}
-            Generate PDF
-          </Button>
-        </div>
+        </TooltipWhenDisabled>
       </div>
 
       <TailoringSections {...tailoringSectionsProps} />
