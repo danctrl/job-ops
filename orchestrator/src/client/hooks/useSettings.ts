@@ -30,6 +30,10 @@ export function useSettings() {
     renderMarkdownInJobDescriptions:
       settings?.renderMarkdownInJobDescriptions?.value ?? true,
     autoTailorOnManualImport: settings?.autoTailorOnManualImport?.value ?? true,
+    autoGenerateMaterialsForTopJobs:
+      settings?.autoGenerateMaterialsForTopJobs?.value ?? false,
+    showCoverageScore:
+      settings?.tailoringFeatures?.value?.showCoverageScore ?? true,
     refreshSettings,
   };
 }

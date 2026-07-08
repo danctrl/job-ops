@@ -23,6 +23,7 @@ export const DisplaySettingsSection: React.FC<DisplaySettingsSectionProps> = ({
     showSponsorInfo,
     renderMarkdownInJobDescriptions,
     autoTailorOnManualImport,
+    autoGenerateMaterialsForTopJobs,
   } = values;
   const { control } = useFormContext<UpdateSettingsInput>();
 
@@ -136,6 +137,41 @@ export const DisplaySettingsSection: React.FC<DisplaySettingsSectionProps> = ({
 
         <Separator />
 
+        <div className="flex items-start space-x-3">
+          <Controller
+            name="autoGenerateMaterialsForTopJobs"
+            control={control}
+            render={({ field }) => (
+              <Checkbox
+                id="autoGenerateMaterialsForTopJobs"
+                checked={field.value ?? autoGenerateMaterialsForTopJobs.default}
+                onCheckedChange={(checked) => {
+                  field.onChange(
+                    checked === "indeterminate" ? null : checked === true,
+                  );
+                }}
+                disabled={isLoading || isSaving}
+              />
+            )}
+          />
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="autoGenerateMaterialsForTopJobs"
+              className="text-sm font-medium leading-none cursor-pointer"
+            >
+              Auto-generate materials for top-scored jobs
+            </label>
+            <p className="text-xs text-muted-foreground">
+              When enabled, the best-scored jobs found during a search
+              immediately get a tailored resume PDF and move to Ready. Turn off
+              to save LLM tokens — jobs land in Saved and you generate materials
+              by hand from the job detail view.
+            </p>
+          </div>
+        </div>
+
+        <Separator />
+
         <div className="grid gap-3 text-sm sm:grid-cols-2">
           <div>
             <div className="text-xs text-muted-foreground">
@@ -185,6 +221,24 @@ export const DisplaySettingsSection: React.FC<DisplaySettingsSectionProps> = ({
             </div>
             <div className="break-words font-mono text-xs font-semibold">
               {autoTailorOnManualImport.default ? "Enabled" : "Disabled"}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">
+              Auto-generate top-job materials effective
+            </div>
+            <div className="break-words font-mono text-xs">
+              {autoGenerateMaterialsForTopJobs.effective
+                ? "Enabled"
+                : "Disabled"}
+            </div>
+          </div>
+          <div>
+            <div className="text-xs text-muted-foreground">
+              Auto-generate top-job materials default
+            </div>
+            <div className="break-words font-mono text-xs font-semibold">
+              {autoGenerateMaterialsForTopJobs.default ? "Enabled" : "Disabled"}
             </div>
           </div>
         </div>

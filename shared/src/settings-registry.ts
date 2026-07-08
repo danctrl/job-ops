@@ -9,6 +9,14 @@ import {
   CHAT_STYLE_MANUAL_LANGUAGE_VALUES,
   type ChatStyleLanguageMode,
   type ChatStyleManualLanguage,
+  COVER_LETTER_RENDERER_VALUES,
+  COVER_LETTER_THEME_VALUES,
+  type CoverLetterRenderer,
+  type CoverLetterTheme,
+  LATEX_PROJECT_LINK_STYLE_VALUES,
+  LATEX_THEME_VALUES,
+  type LatexProjectLinkStyle,
+  type LatexTheme,
   LLM_PROVIDER_VALUES,
   LLM_PURPOSE_VALUES,
   type LlmProviderId,
@@ -17,6 +25,8 @@ import {
   PDF_RENDERER_VALUES,
   type PdfRenderer,
   type ResumeProjectsSettings,
+  type ResumeSkillsSettings,
+  type TailoringFeaturesSettings,
   TYPST_THEME_VALUES,
   type TypstTheme,
 } from "./types/settings";
@@ -182,6 +192,14 @@ const parseChatStyleManualLanguageOrNull = createEnumParser(
 );
 const parsePdfRendererOrNull = createEnumParser(PDF_RENDERER_VALUES);
 const parseTypstThemeOrNull = createEnumParser(TYPST_THEME_VALUES);
+const parseLatexThemeOrNull = createEnumParser(LATEX_THEME_VALUES);
+const parseLatexProjectLinkStyleOrNull = createEnumParser(
+  LATEX_PROJECT_LINK_STYLE_VALUES,
+);
+const parseCoverLetterRendererOrNull = createEnumParser(
+  COVER_LETTER_RENDERER_VALUES,
+);
+const parseCoverLetterThemeOrNull = createEnumParser(COVER_LETTER_THEME_VALUES);
 
 const llmPurposeOverrideSchema = z.object({
   provider: z.preprocess(
@@ -308,6 +326,19 @@ export const resumeProjectsSchema = z.object({
   aiSelectableProjectIds: z.array(z.string().trim().min(1)).max(200),
 });
 
+export const resumeSkillsSchema = z.object({
+  maxKeywords: z.number().int().min(0).max(100),
+  lockedGroupIds: z.array(z.string().trim().min(1)).max(200),
+  excludedGroupIds: z.array(z.string().trim().min(1)).max(200),
+});
+
+export const tailoringFeaturesSchema = z.object({
+  tailorExperience: z.boolean(),
+  summaryKeywordPush: z.boolean(),
+  softSkillsOnlyIfMentioned: z.boolean(),
+  showCoverageScore: z.boolean(),
+});
+
 export const settingsRegistry = {
   // --- Typed Settings ---
   model: {
@@ -409,6 +440,51 @@ export const settingsRegistry = {
       return value ? JSON.stringify(value) : null;
     },
   },
+  resumeSkills: {
+    kind: "typed" as const,
+    schema: resumeSkillsSchema,
+    default: (): ResumeSkillsSettings => ({
+      maxKeywords: 22,
+      lockedGroupIds: [],
+      excludedGroupIds: [],
+    }),
+    parse: (raw: string | undefined): ResumeSkillsSettings | null => {
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    },
+    serialize: (
+      value: ResumeSkillsSettings | null | undefined,
+    ): string | null => {
+      return value ? JSON.stringify(value) : null;
+    },
+  },
+  tailoringFeatures: {
+    kind: "typed" as const,
+    schema: tailoringFeaturesSchema,
+    default: (): TailoringFeaturesSettings => ({
+      tailorExperience: false,
+      summaryKeywordPush: true,
+      softSkillsOnlyIfMentioned: true,
+      showCoverageScore: true,
+    }),
+    parse: (raw: string | undefined): TailoringFeaturesSettings | null => {
+      if (!raw) return null;
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    },
+    serialize: (
+      value: TailoringFeaturesSettings | null | undefined,
+    ): string | null => {
+      return value ? JSON.stringify(value) : null;
+    },
+  },
   pdfRenderer: {
     kind: "typed" as const,
     schema: z.enum(PDF_RENDERER_VALUES),
@@ -423,6 +499,39 @@ export const settingsRegistry = {
     default: (): TypstTheme => "classic",
     parse: parseTypstThemeOrNull,
     serialize: (value: TypstTheme | null | undefined): string | null =>
+      value ?? null,
+  },
+  latexTheme: {
+    kind: "typed" as const,
+    schema: z.enum(LATEX_THEME_VALUES),
+    default: (): LatexTheme => "jake",
+    parse: parseLatexThemeOrNull,
+    serialize: (value: LatexTheme | null | undefined): string | null =>
+      value ?? null,
+  },
+  latexProjectLinkStyle: {
+    kind: "typed" as const,
+    schema: z.enum(LATEX_PROJECT_LINK_STYLE_VALUES),
+    default: (): LatexProjectLinkStyle => "icon",
+    parse: parseLatexProjectLinkStyleOrNull,
+    serialize: (
+      value: LatexProjectLinkStyle | null | undefined,
+    ): string | null => value ?? null,
+  },
+  coverLetterRenderer: {
+    kind: "typed" as const,
+    schema: z.enum(COVER_LETTER_RENDERER_VALUES),
+    default: (): CoverLetterRenderer => "typst",
+    parse: parseCoverLetterRendererOrNull,
+    serialize: (value: CoverLetterRenderer | null | undefined): string | null =>
+      value ?? null,
+  },
+  coverLetterTheme: {
+    kind: "typed" as const,
+    schema: z.enum(COVER_LETTER_THEME_VALUES),
+    default: (): CoverLetterTheme => "classic",
+    parse: parseCoverLetterThemeOrNull,
+    serialize: (value: CoverLetterTheme | null | undefined): string | null =>
       value ?? null,
   },
   ukvisajobsMaxJobs: {
@@ -576,6 +685,24 @@ export const settingsRegistry = {
     serialize: (value: string | null | undefined): string | null =>
       value ?? null,
   },
+  coverLetterPromptTemplate: {
+    kind: "typed" as const,
+    schema: z.string().trim().max(12000),
+    default: (): string =>
+      getDefaultPromptTemplate("coverLetterPromptTemplate"),
+    parse: parseNonEmptyStringOrNull,
+    serialize: (value: string | null | undefined): string | null =>
+      value ?? null,
+  },
+  resumeTranslationPromptTemplate: {
+    kind: "typed" as const,
+    schema: z.string().trim().max(12000),
+    default: (): string =>
+      getDefaultPromptTemplate("resumeTranslationPromptTemplate"),
+    parse: parseNonEmptyStringOrNull,
+    serialize: (value: string | null | undefined): string | null =>
+      value ?? null,
+  },
   searchCities: {
     kind: "typed" as const,
     schema: z.string().trim().max(100),
@@ -645,6 +772,13 @@ export const settingsRegistry = {
     kind: "typed" as const,
     schema: z.boolean(),
     default: (): boolean => true,
+    parse: parseBitBoolOrNull,
+    serialize: serializeBitBool,
+  },
+  autoGenerateMaterialsForTopJobs: {
+    kind: "typed" as const,
+    schema: z.boolean(),
+    default: (): boolean => false,
     parse: parseBitBoolOrNull,
     serialize: serializeBitBool,
   },

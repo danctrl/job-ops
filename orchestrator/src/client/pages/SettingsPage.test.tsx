@@ -9,6 +9,12 @@ import { _resetTracerReadinessCache } from "../hooks/useTracerReadiness";
 import { renderWithQueryClient } from "../test/renderWithQueryClient";
 import { SettingsPage } from "./SettingsPage";
 
+// PdfCanvasPreview imports pdfjs-dist at module load, which fails under jsdom.
+// The settings tests don't exercise PDF rendering, so stub the component out.
+vi.mock("@client/components/PdfCanvasPreview", () => ({
+  PdfCanvasPreview: () => null,
+}));
+
 const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
 
 const render = (ui: Parameters<typeof renderWithQueryClient>[0]) =>
@@ -18,6 +24,9 @@ vi.mock("../api", () => ({
   getAppStatus: vi.fn(),
   getSettings: vi.fn(),
   getLlmModels: vi.fn().mockResolvedValue([]),
+  getCoverLetterSamplePreviewBlob: vi
+    .fn()
+    .mockRejectedValue(new Error("no preview in test")),
   getCodexAuthStatus: vi.fn().mockResolvedValue({
     authenticated: false,
     username: null,
@@ -162,6 +171,11 @@ const openPromptTemplatesSection = async () => {
 const openReactiveResumeSection = async () => {
   await openNavGroup(/^integrations$/i);
   await clickLastButtonByName(/reactive resume/i);
+};
+
+const openCoverLetterSection = async () => {
+  await openNavGroup(/^integrations$/i);
+  await clickLastButtonByName(/cover letter/i);
 };
 
 const openDisplaySection = async () => {
@@ -444,6 +458,35 @@ describe("SettingsPage", () => {
           tailoring: { provider: "openai", model: "gpt-5.4-mini" },
         },
         llmPurposeApiKeys: { tailoring: "sk-tailoring" },
+      }),
+    );
+  });
+
+  it("persists the cover letter LaTeX renderer and danctrl template on save", async () => {
+    renderPage();
+    await openCoverLetterSection();
+
+    // Switch renderer Typst -> Local LaTeX, which reveals the LaTeX template picker.
+    const rendererSelect = await screen.findByRole("combobox", {
+      name: /renderer/i,
+    });
+    fireEvent.click(rendererSelect);
+    fireEvent.click(await screen.findByText("Local LaTeX"));
+
+    const templateSelect = await screen.findByRole("combobox", {
+      name: /template/i,
+    });
+    fireEvent.click(templateSelect);
+    fireEvent.click(await screen.findByText("danctrl (Awesome-CV)"));
+
+    await waitFor(() => expect(getSaveButton()).toBeEnabled());
+    fireEvent.click(getSaveButton());
+
+    await waitFor(() => expect(api.updateSettings).toHaveBeenCalled());
+    expect(api.updateSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        coverLetterRenderer: "latex",
+        latexTheme: "danctrl",
       }),
     );
   });

@@ -26,6 +26,7 @@ export type DisplayValues = {
   showSponsorInfo: EffectiveDefault<boolean>;
   renderMarkdownInJobDescriptions: EffectiveDefault<boolean>;
   autoTailorOnManualImport: EffectiveDefault<boolean>;
+  autoGenerateMaterialsForTopJobs: EffectiveDefault<boolean>;
 };
 export type ChatValues = {
   tone: EffectiveDefault<string>;
@@ -68,4 +69,6 @@ export type PromptTemplatesValues = {
   ghostwriterSystemPromptTemplate: EffectiveDefault<string>;
   tailoringPromptTemplate: EffectiveDefault<string>;
   scoringPromptTemplate: EffectiveDefault<string>;
+  coverLetterPromptTemplate: EffectiveDefault<string>;
+  resumeTranslationPromptTemplate: EffectiveDefault<string>;
 };

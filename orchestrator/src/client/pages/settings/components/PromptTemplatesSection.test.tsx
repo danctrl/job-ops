@@ -34,6 +34,16 @@ const PromptTemplatesHarness = () => {
               effective: "Custom Scoring",
               default: getDefaultPromptTemplate("scoringPromptTemplate"),
             },
+            coverLetterPromptTemplate: {
+              effective: "Custom Cover Letter",
+              default: getDefaultPromptTemplate("coverLetterPromptTemplate"),
+            },
+            resumeTranslationPromptTemplate: {
+              effective: "Custom Resume Translation",
+              default: getDefaultPromptTemplate(
+                "resumeTranslationPromptTemplate",
+              ),
+            },
           }}
           isLoading={false}
           isSaving={false}

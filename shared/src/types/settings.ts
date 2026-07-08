@@ -1,4 +1,8 @@
 import {
+  COVER_LETTER_THEME_LABELS,
+  COVER_LETTER_THEME_VALUES,
+} from "../generated/cover-letter-themes";
+import {
   TYPST_THEME_LABELS,
   TYPST_THEME_VALUES,
 } from "../generated/typst-themes";
@@ -8,6 +12,7 @@ import type {
 } from "../location-preferences";
 
 export { TYPST_THEME_LABELS, TYPST_THEME_VALUES };
+export { COVER_LETTER_THEME_LABELS, COVER_LETTER_THEME_VALUES };
 
 export interface ResumeProjectCatalogItem {
   id: string;
@@ -21,6 +26,19 @@ export interface ResumeProjectsSettings {
   maxProjects: number;
   lockedProjectIds: string[];
   aiSelectableProjectIds: string[];
+}
+
+export interface ResumeSkillsSettings {
+  maxKeywords: number;
+  lockedGroupIds: string[];
+  excludedGroupIds: string[];
+}
+
+export interface TailoringFeaturesSettings {
+  tailorExperience: boolean;
+  summaryKeywordPush: boolean;
+  softSkillsOnlyIfMentioned: boolean;
+  showCoverageScore: boolean;
 }
 
 export const LLM_PROVIDER_VALUES = [
@@ -61,11 +79,42 @@ export const PDF_RENDERER_VALUES = ["rxresume", "latex", "typst"] as const;
 export type PdfRenderer = (typeof PDF_RENDERER_VALUES)[number];
 export const PDF_RENDERER_LABELS: Record<PdfRenderer, string> = {
   rxresume: "RxResume export",
-  latex: "Local LaTeX (Jake template)",
+  latex: "Local LaTeX",
   typst: "Local Typst",
 };
 
 export type TypstTheme = (typeof TYPST_THEME_VALUES)[number];
+
+// LaTeX resume themes. "jake" is the long-standing single-column template;
+// "danctrl" is the exact Awesome-CV design (Poppins + JetBrains Mono, emerald
+// accent, FontAwesome contact icons) whose assets live alongside the renderer.
+export const LATEX_THEME_VALUES = ["jake", "danctrl"] as const;
+export type LatexTheme = (typeof LATEX_THEME_VALUES)[number];
+export const LATEX_THEME_LABELS: Record<LatexTheme, string> = {
+  jake: "Jake (single column)",
+  danctrl: "danctrl (Awesome-CV)",
+};
+
+export const LATEX_PROJECT_LINK_STYLE_VALUES = ["icon", "url"] as const;
+export type LatexProjectLinkStyle =
+  (typeof LATEX_PROJECT_LINK_STYLE_VALUES)[number];
+export const LATEX_PROJECT_LINK_STYLE_LABELS: Record<
+  LatexProjectLinkStyle,
+  string
+> = {
+  icon: "Icon link",
+  url: "Full URL",
+};
+
+export const COVER_LETTER_RENDERER_VALUES = ["typst", "latex"] as const;
+export type CoverLetterRenderer = (typeof COVER_LETTER_RENDERER_VALUES)[number];
+export const COVER_LETTER_RENDERER_LABELS: Record<CoverLetterRenderer, string> =
+  {
+    typst: "Local Typst",
+    latex: "Local LaTeX",
+  };
+
+export type CoverLetterTheme = (typeof COVER_LETTER_THEME_VALUES)[number];
 
 export const CHAT_STYLE_LANGUAGE_MODE_VALUES = [
   "manual",
@@ -241,8 +290,14 @@ export interface AppSettings {
   pipelineWebhookUrl: Resolved<string>;
   jobCompleteWebhookUrl: Resolved<string>;
   resumeProjects: Resolved<ResumeProjectsSettings>;
+  resumeSkills: Resolved<ResumeSkillsSettings>;
+  tailoringFeatures: Resolved<TailoringFeaturesSettings>;
   pdfRenderer: Resolved<PdfRenderer>;
   typstTheme: Resolved<TypstTheme>;
+  latexTheme: Resolved<LatexTheme>;
+  latexProjectLinkStyle: Resolved<LatexProjectLinkStyle>;
+  coverLetterRenderer: Resolved<CoverLetterRenderer>;
+  coverLetterTheme: Resolved<CoverLetterTheme>;
   ukvisajobsMaxJobs: Resolved<number>;
   adzunaMaxJobsPerTerm: Resolved<number>;
   gradcrackerMaxJobsPerTerm: Resolved<number>;
@@ -258,6 +313,8 @@ export interface AppSettings {
   ghostwriterStopSlopEnabled: Resolved<boolean>;
   tailoringPromptTemplate: Resolved<string>;
   scoringPromptTemplate: Resolved<string>;
+  coverLetterPromptTemplate: Resolved<string>;
+  resumeTranslationPromptTemplate: Resolved<string>;
   searchCities: Resolved<string>;
   locationSearchScope: Resolved<LocationSearchScope>;
   locationMatchStrictness: Resolved<LocationMatchStrictness>;
@@ -266,6 +323,7 @@ export interface AppSettings {
   showSponsorInfo: Resolved<boolean>;
   renderMarkdownInJobDescriptions: Resolved<boolean>;
   autoTailorOnManualImport: Resolved<boolean>;
+  autoGenerateMaterialsForTopJobs: Resolved<boolean>;
   chatStyleTone: Resolved<string>;
   chatStyleFormality: Resolved<string>;
   chatStyleConstraints: Resolved<string>;

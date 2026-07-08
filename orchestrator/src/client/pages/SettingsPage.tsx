@@ -20,6 +20,7 @@ import {
 } from "@client/lib/rxresume-config";
 import { BackupSettingsSection } from "@client/pages/settings/components/BackupSettingsSection";
 import { ChatSettingsSection } from "@client/pages/settings/components/ChatSettingsSection";
+import { CoverLetterSection } from "@client/pages/settings/components/CoverLetterSection";
 import { DangerZoneSection } from "@client/pages/settings/components/DangerZoneSection";
 import { DisplaySettingsSection } from "@client/pages/settings/components/DisplaySettingsSection";
 import { EnvironmentSettingsSection } from "@client/pages/settings/components/EnvironmentSettingsSection";
@@ -27,6 +28,7 @@ import { ModelSettingsSection } from "@client/pages/settings/components/ModelSet
 import { PromptTemplatesSection } from "@client/pages/settings/components/PromptTemplatesSection";
 import { ReactiveResumeSection } from "@client/pages/settings/components/ReactiveResumeSection";
 import { ScoringSettingsSection } from "@client/pages/settings/components/ScoringSettingsSection";
+import { TailoringFeaturesSection } from "@client/pages/settings/components/TailoringFeaturesSection";
 import { TracerLinksSettingsSection } from "@client/pages/settings/components/TracerLinksSettingsSection";
 import { WebhooksSection } from "@client/pages/settings/components/WebhooksSection";
 import {
@@ -84,6 +86,7 @@ const DEFAULT_FORM_VALUES: UpdateSettingsInput = {
   showSponsorInfo: null,
   renderMarkdownInJobDescriptions: null,
   autoTailorOnManualImport: null,
+  autoGenerateMaterialsForTopJobs: null,
   chatStyleTone: "",
   chatStyleFormality: "",
   chatStyleConstraints: "",
@@ -110,6 +113,8 @@ const DEFAULT_FORM_VALUES: UpdateSettingsInput = {
   ghostwriterSystemPromptTemplate: "",
   tailoringPromptTemplate: "",
   scoringPromptTemplate: "",
+  coverLetterPromptTemplate: "",
+  resumeTranslationPromptTemplate: "",
 };
 
 type LlmProviderValue = LlmProviderId | null;
@@ -132,6 +137,8 @@ type SettingsSectionId =
   | "prompt-templates"
   | "scoring"
   | "reactive-resume"
+  | "tailoring"
+  | "cover-letter"
   | "webhooks"
   | "tracer-links"
   | "environment"
@@ -218,6 +225,26 @@ const SETTINGS_NAV_GROUPS: SettingsNavGroup[] = [
         label: "Reactive Resume",
         description: "Resume sync, templates, and project selection.",
         searchTerms: ["rxresume", "resume", "projects", "template"],
+      },
+      {
+        id: "tailoring",
+        label: "Tailoring Features",
+        description:
+          "Experience bullet tailoring, keyword emphasis, and coverage score.",
+        searchTerms: [
+          "tailor",
+          "experience",
+          "keywords",
+          "coverage",
+          "bullets",
+          "ats",
+        ],
+      },
+      {
+        id: "cover-letter",
+        label: "Cover letter",
+        description: "Renderer and template for generated cover letters.",
+        searchTerms: ["cover letter", "typst", "latex", "template", "renderer"],
       },
       {
         id: "webhooks",
@@ -311,6 +338,8 @@ const SECTION_FIELD_MAP: Record<
     "ghostwriterSystemPromptTemplate",
     "tailoringPromptTemplate",
     "scoringPromptTemplate",
+    "coverLetterPromptTemplate",
+    "resumeTranslationPromptTemplate",
   ],
   scoring: [
     "penalizeMissingSalary",
@@ -320,11 +349,16 @@ const SECTION_FIELD_MAP: Record<
   ],
   "reactive-resume": [
     "pdfRenderer",
+    "typstTheme",
+    "latexTheme",
+    "latexProjectLinkStyle",
     "rxresumeBaseResumeId",
     "rxresumeApiKey",
     "rxresumeUrl",
     "resumeProjects",
   ],
+  tailoring: [],
+  "cover-letter": ["coverLetterRenderer", "coverLetterTheme", "latexTheme"],
   webhooks: ["pipelineWebhookUrl", "jobCompleteWebhookUrl", "webhookSecret"],
   "tracer-links": [],
   environment: [
@@ -337,6 +371,7 @@ const SECTION_FIELD_MAP: Record<
     "showSponsorInfo",
     "renderMarkdownInJobDescriptions",
     "autoTailorOnManualImport",
+    "autoGenerateMaterialsForTopJobs",
   ],
   backup: ["backupEnabled", "backupHour", "backupMaxCount"],
   "danger-zone": [],
@@ -408,10 +443,15 @@ const NULL_SETTINGS_PAYLOAD: UpdateSettingsInput = {
   resumeProjects: null,
   pdfRenderer: null,
   typstTheme: null,
+  latexTheme: null,
+  latexProjectLinkStyle: null,
+  coverLetterRenderer: null,
+  coverLetterTheme: null,
   rxresumeBaseResumeId: null,
   showSponsorInfo: null,
   renderMarkdownInJobDescriptions: null,
   autoTailorOnManualImport: null,
+  autoGenerateMaterialsForTopJobs: null,
   chatStyleTone: null,
   chatStyleFormality: null,
   chatStyleConstraints: null,
@@ -439,6 +479,8 @@ const NULL_SETTINGS_PAYLOAD: UpdateSettingsInput = {
   ghostwriterSystemPromptTemplate: null,
   tailoringPromptTemplate: null,
   scoringPromptTemplate: null,
+  coverLetterPromptTemplate: null,
+  resumeTranslationPromptTemplate: null,
 };
 
 function getResetSettingsPayload(
@@ -475,11 +517,20 @@ const mapSettingsToForm = (data: AppSettings): UpdateSettingsInput => ({
   resumeProjects: data.resumeProjects.override,
   pdfRenderer: data.pdfRenderer.override ?? data.pdfRenderer.value,
   typstTheme: data.typstTheme.override ?? data.typstTheme.value,
+  latexTheme: data.latexTheme.override ?? data.latexTheme.value,
+  latexProjectLinkStyle:
+    data.latexProjectLinkStyle.override ?? data.latexProjectLinkStyle.value,
+  coverLetterRenderer:
+    data.coverLetterRenderer.override ?? data.coverLetterRenderer.value,
+  coverLetterTheme:
+    data.coverLetterTheme.override ?? data.coverLetterTheme.value,
   rxresumeBaseResumeId: data.rxresumeBaseResumeId,
   showSponsorInfo: data.showSponsorInfo.override,
   renderMarkdownInJobDescriptions:
     data.renderMarkdownInJobDescriptions.override,
   autoTailorOnManualImport: data.autoTailorOnManualImport.override,
+  autoGenerateMaterialsForTopJobs:
+    data.autoGenerateMaterialsForTopJobs.override,
   chatStyleTone: data.chatStyleTone.override ?? "",
   chatStyleFormality: data.chatStyleFormality.override ?? "",
   chatStyleConstraints: data.chatStyleConstraints.override ?? "",
@@ -508,6 +559,9 @@ const mapSettingsToForm = (data: AppSettings): UpdateSettingsInput => ({
     data.ghostwriterSystemPromptTemplate.value ?? "",
   tailoringPromptTemplate: data.tailoringPromptTemplate.value ?? "",
   scoringPromptTemplate: data.scoringPromptTemplate.value ?? "",
+  coverLetterPromptTemplate: data.coverLetterPromptTemplate.value ?? "",
+  resumeTranslationPromptTemplate:
+    data.resumeTranslationPromptTemplate.value ?? "",
 });
 
 const normalizeString = (value: string | null | undefined) => {
@@ -641,6 +695,24 @@ const getDerivedSettings = (settings: AppSettings | null) => {
         effective: settings?.typstTheme?.value ?? "classic",
         default: settings?.typstTheme?.default ?? "classic",
       },
+      latexTheme: {
+        effective: settings?.latexTheme?.value ?? "jake",
+        default: settings?.latexTheme?.default ?? "jake",
+      },
+      latexProjectLinkStyle: {
+        effective: settings?.latexProjectLinkStyle?.value ?? "icon",
+        default: settings?.latexProjectLinkStyle?.default ?? "icon",
+      },
+    },
+    coverLetter: {
+      renderer: {
+        effective: settings?.coverLetterRenderer?.value ?? "typst",
+        default: settings?.coverLetterRenderer?.default ?? "typst",
+      },
+      theme: {
+        effective: settings?.coverLetterTheme?.value ?? "classic",
+        default: settings?.coverLetterTheme?.default ?? "classic",
+      },
     },
     display: {
       showSponsorInfo: {
@@ -654,6 +726,10 @@ const getDerivedSettings = (settings: AppSettings | null) => {
       autoTailorOnManualImport: {
         effective: settings?.autoTailorOnManualImport?.value ?? true,
         default: settings?.autoTailorOnManualImport?.default ?? true,
+      },
+      autoGenerateMaterialsForTopJobs: {
+        effective: settings?.autoGenerateMaterialsForTopJobs?.value ?? false,
+        default: settings?.autoGenerateMaterialsForTopJobs?.default ?? false,
       },
     },
     chat: {
@@ -754,6 +830,14 @@ const getDerivedSettings = (settings: AppSettings | null) => {
       scoringPromptTemplate: {
         effective: settings?.scoringPromptTemplate?.value ?? "",
         default: settings?.scoringPromptTemplate?.default ?? "",
+      },
+      coverLetterPromptTemplate: {
+        effective: settings?.coverLetterPromptTemplate?.value ?? "",
+        default: settings?.coverLetterPromptTemplate?.default ?? "",
+      },
+      resumeTranslationPromptTemplate: {
+        effective: settings?.resumeTranslationPromptTemplate?.value ?? "",
+        default: settings?.resumeTranslationPromptTemplate?.default ?? "",
       },
     },
   };
@@ -916,6 +1000,7 @@ export const SettingsPage: React.FC = () => {
     pipelineWebhook,
     jobCompleteWebhook,
     reactiveResume,
+    coverLetter,
     display,
     chat,
     envSettings,
@@ -1182,6 +1267,22 @@ export const SettingsPage: React.FC = () => {
           data.typstTheme,
           reactiveResume.typstTheme.default,
         ),
+        latexTheme: nullIfSame(
+          data.latexTheme,
+          reactiveResume.latexTheme.default,
+        ),
+        latexProjectLinkStyle: nullIfSame(
+          data.latexProjectLinkStyle,
+          reactiveResume.latexProjectLinkStyle.default,
+        ),
+        coverLetterRenderer: nullIfSame(
+          data.coverLetterRenderer,
+          coverLetter.renderer.default,
+        ),
+        coverLetterTheme: nullIfSame(
+          data.coverLetterTheme,
+          coverLetter.theme.default,
+        ),
         ...(dirtyFields.rxresumeBaseResumeId
           ? { rxresumeBaseResumeId: normalizeString(data.rxresumeBaseResumeId) }
           : {}),
@@ -1196,6 +1297,10 @@ export const SettingsPage: React.FC = () => {
         autoTailorOnManualImport: nullIfSame(
           data.autoTailorOnManualImport,
           display.autoTailorOnManualImport.default,
+        ),
+        autoGenerateMaterialsForTopJobs: nullIfSame(
+          data.autoGenerateMaterialsForTopJobs,
+          display.autoGenerateMaterialsForTopJobs.default,
         ),
         chatStyleTone: normalizeString(data.chatStyleTone),
         chatStyleFormality: normalizeString(data.chatStyleFormality),
@@ -1256,6 +1361,14 @@ export const SettingsPage: React.FC = () => {
         scoringPromptTemplate: nullIfSame(
           normalizeString(data.scoringPromptTemplate),
           promptTemplates.scoringPromptTemplate.default,
+        ),
+        coverLetterPromptTemplate: nullIfSame(
+          normalizeString(data.coverLetterPromptTemplate),
+          promptTemplates.coverLetterPromptTemplate.default,
+        ),
+        resumeTranslationPromptTemplate: nullIfSame(
+          normalizeString(data.resumeTranslationPromptTemplate),
+          promptTemplates.resumeTranslationPromptTemplate.default,
         ),
         ...envPayload,
       };
@@ -1618,6 +1731,18 @@ export const SettingsPage: React.FC = () => {
           lockedCount={lockedCount}
           maxProjectsTotal={effectiveMaxProjectsTotal}
           isProjectsLoading={isFetchingRxResumeProjects}
+          isLoading={isLoading}
+          isSaving={isSaving}
+          layoutMode="panel"
+        />
+      );
+      break;
+    case "tailoring":
+      activeSectionContent = <TailoringFeaturesSection layoutMode="panel" />;
+      break;
+    case "cover-letter":
+      activeSectionContent = (
+        <CoverLetterSection
           isLoading={isLoading}
           isSaving={isSaving}
           layoutMode="panel"

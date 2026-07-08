@@ -49,8 +49,35 @@ export async function getProfile(): Promise<ResumeProfile> {
   return fetchApi<ResumeProfile>("/profile");
 }
 
-export async function getDesignResume(): Promise<DesignResumeDocument> {
-  return fetchApi<DesignResumeDocument>("/design-resume");
+function designResumeLanguageSuffix(language?: string): string {
+  return language && language !== "english"
+    ? `?language=${encodeURIComponent(language)}`
+    : "";
+}
+
+export async function getDesignResume(
+  language?: string,
+): Promise<DesignResumeDocument> {
+  return fetchApi<DesignResumeDocument>(
+    `/design-resume${designResumeLanguageSuffix(language)}`,
+  );
+}
+
+export async function getResumeMasters(): Promise<{
+  masters: Array<{ id: string; title: string; language: string }>;
+}> {
+  return fetchApi<{
+    masters: Array<{ id: string; title: string; language: string }>;
+  }>("/design-resume/languages");
+}
+
+export async function createLanguageMaster(
+  language: string,
+): Promise<DesignResumeDocument> {
+  return fetchApi<DesignResumeDocument>("/design-resume/language-master", {
+    method: "POST",
+    body: JSON.stringify({ language }),
+  });
 }
 
 export async function getDesignResumeStatus(): Promise<DesignResumeStatusResponse> {
@@ -76,11 +103,15 @@ export async function importDesignResumeFromFile(input: {
 
 export async function updateDesignResume(
   input: DesignResumePatchRequest,
+  language?: string,
 ): Promise<DesignResumeDocument> {
-  return fetchApi<DesignResumeDocument>("/design-resume", {
-    method: "PATCH",
-    body: JSON.stringify(input),
-  });
+  return fetchApi<DesignResumeDocument>(
+    `/design-resume${designResumeLanguageSuffix(language)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    },
+  );
 }
 
 export async function uploadDesignResumePicture(input: {
@@ -132,10 +163,15 @@ export async function exportDesignResume(): Promise<DesignResumeExportResponse> 
   return fetchApi<DesignResumeExportResponse>("/design-resume/export");
 }
 
-export async function generateDesignResumePdf(): Promise<DesignResumePdfResponse> {
-  return fetchApi<DesignResumePdfResponse>("/design-resume/generate-pdf", {
-    method: "POST",
-  });
+export async function generateDesignResumePdf(
+  language?: string,
+): Promise<DesignResumePdfResponse> {
+  return fetchApi<DesignResumePdfResponse>(
+    `/design-resume/generate-pdf${designResumeLanguageSuffix(language)}`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export async function generateDesignResumeFieldSuggestion(

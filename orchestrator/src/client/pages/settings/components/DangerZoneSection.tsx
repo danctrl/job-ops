@@ -104,7 +104,7 @@ export const DangerZoneSection: React.FC<DangerZoneSectionProps> = ({
                   </div>
                   <div className="grid gap-0.5">
                     <span className="text-sm font-medium capitalize">
-                      {status}
+                      {status.replace(/_/g, " ")}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       {STATUS_DESCRIPTIONS[status]}
@@ -131,7 +131,8 @@ export const DangerZoneSection: React.FC<DangerZoneSectionProps> = ({
                 <AlertDialogTitle>Clear jobs by status?</AlertDialogTitle>
                 <AlertDialogDescription>
                   This will delete all jobs with the following statuses:{" "}
-                  {statusesToClear.join(", ")}. This action cannot be undone.
+                  {statusesToClear.map((s) => s.replace(/_/g, " ")).join(", ")}.
+                  This action cannot be undone.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
