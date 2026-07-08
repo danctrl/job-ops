@@ -1,0 +1,7 @@
+{
+  "id": "classic",
+  "label": "Classic",
+  "description": "A plain professional serif cover letter.",
+  "kind": "native",
+  "entrypoint": "main.typ"
+}

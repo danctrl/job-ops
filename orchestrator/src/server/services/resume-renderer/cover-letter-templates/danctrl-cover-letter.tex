@@ -1,0 +1,54 @@
+% danctrl cover letter template (Awesome-CV) — matches the danctrl resume header
+% exactly. Uses __PLACEHOLDER__ tokens for substitution. Compile with XeLaTeX
+% (local) or Tectonic (production). The bundled awesome-cv.cls loads Poppins +
+% JetBrains Mono from the sibling ./fonts/ directory, so rendering is
+% self-contained and needs no system font installation.
+\documentclass[10pt, a4paper]{awesome-cv}
+
+\geometry{left=1.4cm, top=.8cm, right=1.4cm, bottom=1.4cm, footskip=.5cm}
+
+\colorlet{awesome}{awesome-emerald}
+\setbool{acvSectionColorHighlight}{true}
+\renewcommand{\acvHeaderSocialSep}{\hspace{1.4em}}
+
+% Soft off-white page background (matches the danctrl resume).
+\definecolor{pagebackground}{HTML}{F7F7F5}
+\pagecolor{pagebackground}
+
+%-------------------------------------------------------------------------------
+%	PERSONAL INFORMATION
+%-------------------------------------------------------------------------------
+__PERSONAL_INFO__
+
+%-------------------------------------------------------------------------------
+%	RECIPIENT / LETTER META
+%-------------------------------------------------------------------------------
+\recipient{__RECIPIENT_NAME__}{__RECIPIENT_ADDRESS__}
+\letterdate{__DATE__}
+\letteropening{__SALUTATION__}
+\letterclosing{__CLOSING__}
+
+%-------------------------------------------------------------------------------
+\begin{document}
+
+% Extra top padding so the name sits lower, matching the CV feel.
+\vspace{8mm}
+\makecvheader[L]
+
+% Breathe after the header before the recipient block.
+\vspace{4mm}
+
+\makelettertitle
+
+% Air between the recipient block and the salutation / body.
+\vspace{6mm}
+
+\begin{cvletter}
+__BODY__
+\end{cvletter}
+
+\vspace{4mm}
+
+\makeletterclosing
+
+\end{document}
