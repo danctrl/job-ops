@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull, or } from "drizzle-orm";
 import { db, schema } from "../db/index";
 import {
   getPrivateDataScope,
@@ -15,14 +15,60 @@ function assetsScopeFilter() {
   return privateDataScopeFilter(designResumeAssets);
 }
 
+/**
+ * The primary master (English / untagged). Deterministic: never returns a
+ * language-specific master, so editing a German master can't hijack the
+ * default used by the profile, tailoring and English renders.
+ *
+ * Named "latest" for historical callers; it now filters to the primary before
+ * ordering by updatedAt (there is normally exactly one primary row).
+ */
 export async function getLatestDesignResumeDocument() {
   const [row] = await db
     .select()
     .from(designResumeDocuments)
-    .where(documentsScopeFilter())
+    .where(
+      and(
+        documentsScopeFilter(),
+        or(
+          isNull(designResumeDocuments.language),
+          eq(designResumeDocuments.language, "english"),
+        ),
+      ),
+    )
     .orderBy(desc(designResumeDocuments.updatedAt))
     .limit(1);
   return row ?? null;
+}
+
+/** The master hand-authored for a specific language, or null if none exists. */
+export async function getDesignResumeDocumentForLanguage(language: string) {
+  if (language === "english") {
+    return getLatestDesignResumeDocument();
+  }
+  const [row] = await db
+    .select()
+    .from(designResumeDocuments)
+    .where(
+      and(documentsScopeFilter(), eq(designResumeDocuments.language, language)),
+    )
+    .orderBy(desc(designResumeDocuments.updatedAt))
+    .limit(1);
+  return row ?? null;
+}
+
+/** Lightweight list of all masters (primary + language variants) for the UI switcher. */
+export async function listDesignResumeMasters() {
+  return db
+    .select({
+      id: designResumeDocuments.id,
+      title: designResumeDocuments.title,
+      language: designResumeDocuments.language,
+      updatedAt: designResumeDocuments.updatedAt,
+    })
+    .from(designResumeDocuments)
+    .where(documentsScopeFilter())
+    .orderBy(desc(designResumeDocuments.updatedAt));
 }
 
 export async function getDesignResumeDocumentById(id: string) {
@@ -70,6 +116,7 @@ export async function upsertDesignResumeDocument(input: {
   sourceResumeId: string | null;
   sourceMode: string | null;
   importedAt: string | null;
+  language?: string | null;
   createdAt?: string;
   updatedAt: string;
 }) {
@@ -85,6 +132,9 @@ export async function upsertDesignResumeDocument(input: {
         sourceResumeId: input.sourceResumeId,
         sourceMode: input.sourceMode,
         importedAt: input.importedAt,
+        // Keep the existing tag unless the caller explicitly sets one.
+        language:
+          input.language !== undefined ? input.language : existing.language,
         updatedAt: input.updatedAt,
       })
       .where(
@@ -101,6 +151,7 @@ export async function upsertDesignResumeDocument(input: {
       sourceResumeId: input.sourceResumeId,
       sourceMode: input.sourceMode,
       importedAt: input.importedAt,
+      language: input.language ?? null,
       createdAt: input.createdAt ?? input.updatedAt,
       updatedAt: input.updatedAt,
     });

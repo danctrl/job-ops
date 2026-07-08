@@ -1,4 +1,4 @@
-import type { ResumeProfile } from "@shared/types";
+import type { JobBrief, ResumeProfile } from "@shared/types";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const callJsonMock = vi.fn();
@@ -330,5 +330,156 @@ describe("generateTailoring", () => {
     expect(prompt).toContain("Maximum 8 keywords per category");
     // "keep under 90 words" is stripped from constraints because summaryMaxWords (35) takes precedence
     expect(prompt).not.toContain("keep under 90 words");
+  });
+
+  it("passes the full master skills and JD key requirements into the prompt", async () => {
+    vi.mocked(getWritingStyle).mockResolvedValue({
+      tone: "friendly",
+      formality: "low",
+      constraints: "",
+      doNotUse: "",
+      languageMode: "manual",
+      manualLanguage: "english",
+      summaryMaxWords: null,
+      maxKeywordsPerSkill: null,
+    });
+
+    const profile: ResumeProfile = {
+      basics: { name: "Test User", label: "Engineer" },
+      sections: {
+        skills: {
+          id: "skills",
+          visible: true,
+          name: "Skills",
+          items: [
+            {
+              id: "1",
+              name: "Ops",
+              description: "",
+              level: 3,
+              visible: true,
+              keywords: ["Kubernetes", "Ansible"],
+            },
+          ],
+        },
+      },
+    };
+    const brief: JobBrief = {
+      role_summary: "",
+      skills_and_domain_highlights: ["Kubernetes"],
+      tools_mentioned: [],
+      they_want: [],
+      company_offers: [],
+      missing_or_unclear: [],
+    };
+
+    await generateTailoring("Build platforms", profile, brief);
+
+    const prompt = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+    // Full master is handed to the LLM (no pre-filter); JD terms are injected.
+    expect(prompt).toContain("Ansible");
+    expect(prompt).toContain("JD KEY REQUIREMENTS");
+  });
+
+  it("guardrails the returned skills: drops inventions and never returns empty", async () => {
+    vi.mocked(getWritingStyle).mockResolvedValue({
+      tone: "friendly",
+      formality: "low",
+      constraints: "",
+      doNotUse: "",
+      languageMode: "manual",
+      manualLanguage: "english",
+      summaryMaxWords: null,
+      maxKeywordsPerSkill: null,
+    });
+    callJsonMock.mockResolvedValue({
+      success: true,
+      data: {
+        summary: "s",
+        headline: "h",
+        // "Rust" is not in the master and must be dropped.
+        skills: [{ name: "Ops", keywords: ["Kubernetes", "Rust"] }],
+      },
+    });
+
+    const profile: ResumeProfile = {
+      basics: { name: "Test User", label: "Engineer" },
+      sections: {
+        skills: {
+          id: "skills",
+          visible: true,
+          name: "Skills",
+          items: [
+            {
+              id: "1",
+              name: "Ops",
+              description: "",
+              level: 3,
+              visible: true,
+              keywords: ["Kubernetes", "Ansible", "Docker"],
+            },
+          ],
+        },
+      },
+    };
+
+    const result = await generateTailoring("Build platforms", profile);
+    const kept = (result.data?.skills ?? []).flatMap((g) => g.keywords);
+    expect(kept).toContain("Kubernetes");
+    expect(kept).not.toContain("Rust");
+    expect(kept.length).toBeGreaterThan(0);
+  });
+
+  it("gates summary keyword-push and soft-skill prompt lines behind feature flags", async () => {
+    vi.mocked(getWritingStyle).mockResolvedValue({
+      tone: "friendly",
+      formality: "low",
+      constraints: "",
+      doNotUse: "",
+      languageMode: "manual",
+      manualLanguage: "english",
+      summaryMaxWords: null,
+      maxKeywordsPerSkill: null,
+    });
+    const profile: ResumeProfile = {
+      basics: { name: "Test User", label: "Engineer" },
+      sections: {
+        skills: {
+          id: "skills",
+          visible: true,
+          name: "Skills",
+          items: [
+            {
+              id: "1",
+              name: "Ops",
+              description: "",
+              level: 3,
+              visible: true,
+              keywords: ["Docker"],
+            },
+          ],
+        },
+      },
+    };
+
+    await generateTailoring("JD", profile, null, null, {
+      tailorExperience: false,
+      summaryKeywordPush: true,
+      softSkillsOnlyIfMentioned: true,
+      showCoverageScore: true,
+    });
+    const on = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+    expect(on).toContain("Weave in 2-3 of the JD KEY REQUIREMENTS");
+    expect(on).toContain("Include soft skills");
+
+    await generateTailoring("JD", profile, null, null, {
+      tailorExperience: false,
+      summaryKeywordPush: false,
+      softSkillsOnlyIfMentioned: false,
+      showCoverageScore: true,
+    });
+    const off = callJsonMock.mock.calls.at(-1)?.[0]?.messages?.[0]?.content;
+    expect(off).not.toContain("Weave in 2-3 of the JD KEY REQUIREMENTS");
+    expect(off).not.toContain("Include soft skills");
   });
 });

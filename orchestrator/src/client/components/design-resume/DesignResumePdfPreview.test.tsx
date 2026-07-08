@@ -33,6 +33,7 @@ const baseDraft = {
   sourceResumeId: null,
   sourceMode: null,
   importedAt: null,
+  language: null,
   createdAt: "2026-05-22T09:00:00.000Z",
   updatedAt: "2026-05-22T09:00:00.000Z",
   assets: [],
@@ -185,6 +186,7 @@ describe("DesignResumePdfPreview", () => {
         draft={baseDraft}
         pdfRenderer="typst"
         typstTheme="classic"
+        latexTheme="jake"
         isUpdatingRenderer={false}
         isDirty={false}
         saveState="idle"
@@ -217,6 +219,7 @@ describe("DesignResumePdfPreview", () => {
         draft={{ ...baseDraft, revision: 2 }}
         pdfRenderer="typst"
         typstTheme="classic"
+        latexTheme="jake"
         isUpdatingRenderer={false}
         isDirty={false}
         saveState="idle"

@@ -1,4 +1,9 @@
-import type { PdfRenderer, TypstTheme } from "@shared/types";
+import type {
+  LatexProjectLinkStyle,
+  LatexTheme,
+  PdfRenderer,
+  TypstTheme,
+} from "@shared/types";
 import { buildResumeRenderDocument } from "./document";
 import { renderLatexPdf } from "./latex";
 import type { NormalizeResumeJsonOptions } from "./types";
@@ -26,9 +31,12 @@ export async function renderResumePdf(args: {
   language?: NormalizeResumeJsonOptions["language"];
   renderer?: LocalPdfRenderer;
   typstTheme?: TypstTheme;
+  latexTheme?: LatexTheme;
+  latexProjectLinkStyle?: LatexProjectLinkStyle;
 }): Promise<void> {
   const document = buildResumeRenderDocument(args.resumeJson, {
     language: args.language,
+    projectLinkStyle: args.latexProjectLinkStyle,
   });
   if (args.renderer === "typst") {
     await renderTypstPdf({
@@ -44,5 +52,6 @@ export async function renderResumePdf(args: {
     document,
     outputPath: args.outputPath,
     jobId: args.jobId,
+    latexTheme: args.latexTheme,
   });
 }

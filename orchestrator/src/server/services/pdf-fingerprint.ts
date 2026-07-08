@@ -4,6 +4,8 @@ import { settingsRegistry } from "@shared/settings-registry";
 import type {
   Job,
   JobPdfFreshness,
+  LatexProjectLinkStyle,
+  LatexTheme,
   PdfRenderer,
   TypstTheme,
 } from "@shared/types";
@@ -20,6 +22,8 @@ type JobPdfFingerprintInput = Pick<
   | "jobDescription"
   | "tracerLinksEnabled"
   | "employer"
+  | "title"
+  | "location"
 >;
 
 type JobPdfFreshnessInput = JobPdfFingerprintInput &
@@ -32,17 +36,27 @@ export interface PdfFingerprintContext {
   designResumeUpdatedAt: string | null;
   pdfRenderer: PdfRenderer;
   typstTheme: TypstTheme;
+  latexTheme: LatexTheme;
+  latexProjectLinkStyle: LatexProjectLinkStyle;
   rxresumeBaseResumeId: string | null;
 }
 
 export async function resolvePdfFingerprintContext(): Promise<PdfFingerprintContext> {
-  const [designResume, rawRenderer, rawTypstTheme, configuredBaseResume] =
-    await Promise.all([
-      getCurrentDesignResumeOrNullOnLegacy(),
-      settingsRepo.getSetting("pdfRenderer"),
-      settingsRepo.getSetting("typstTheme"),
-      getConfiguredRxResumeBaseResumeId(),
-    ]);
+  const [
+    designResume,
+    rawRenderer,
+    rawTypstTheme,
+    rawLatexTheme,
+    rawLatexProjectLinkStyle,
+    configuredBaseResume,
+  ] = await Promise.all([
+    getCurrentDesignResumeOrNullOnLegacy(),
+    settingsRepo.getSetting("pdfRenderer"),
+    settingsRepo.getSetting("typstTheme"),
+    settingsRepo.getSetting("latexTheme"),
+    settingsRepo.getSetting("latexProjectLinkStyle"),
+    getConfiguredRxResumeBaseResumeId(),
+  ]);
 
   const parsedRenderer = settingsRegistry.pdfRenderer.parse(
     rawRenderer ?? undefined,
@@ -50,6 +64,13 @@ export async function resolvePdfFingerprintContext(): Promise<PdfFingerprintCont
   const parsedTypstTheme = settingsRegistry.typstTheme.parse(
     rawTypstTheme ?? undefined,
   );
+  const parsedLatexTheme = settingsRegistry.latexTheme.parse(
+    rawLatexTheme ?? undefined,
+  );
+  const parsedLatexProjectLinkStyle =
+    settingsRegistry.latexProjectLinkStyle.parse(
+      rawLatexProjectLinkStyle ?? undefined,
+    );
 
   return {
     version: PDF_FINGERPRINT_VERSION,
@@ -58,6 +79,10 @@ export async function resolvePdfFingerprintContext(): Promise<PdfFingerprintCont
     designResumeUpdatedAt: designResume?.updatedAt ?? null,
     pdfRenderer: parsedRenderer ?? settingsRegistry.pdfRenderer.default(),
     typstTheme: parsedTypstTheme ?? settingsRegistry.typstTheme.default(),
+    latexTheme: parsedLatexTheme ?? settingsRegistry.latexTheme.default(),
+    latexProjectLinkStyle:
+      parsedLatexProjectLinkStyle ??
+      settingsRegistry.latexProjectLinkStyle.default(),
     rxresumeBaseResumeId: configuredBaseResume.resumeId ?? null,
   };
 }
@@ -72,6 +97,12 @@ export function createJobPdfFingerprint(
     ...(context.pdfRenderer === "typst"
       ? { typstTheme: context.typstTheme }
       : {}),
+    ...(context.pdfRenderer === "latex"
+      ? {
+          latexTheme: context.latexTheme,
+          latexProjectLinkStyle: context.latexProjectLinkStyle,
+        }
+      : {}),
     rxresumeBaseResumeId: context.rxresumeBaseResumeId,
     designResumeDocumentId: context.designResumeDocumentId,
     designResumeRevision: context.designResumeRevision,
@@ -84,6 +115,8 @@ export function createJobPdfFingerprint(
       jobDescription: job.jobDescription ?? null,
       tracerLinksEnabled: Boolean(job.tracerLinksEnabled),
       employer: job.employer ?? null,
+      title: job.title ?? null,
+      location: job.location ?? null,
     },
   };
 
@@ -105,16 +138,16 @@ export function getJobPdfFreshness(
 export function applyJobPdfFreshness<T extends JobPdfFreshnessInput>(
   job: T,
   context: PdfFingerprintContext,
-): T & { pdfFreshness: JobPdfFreshness } {
+): T & { resumeFreshness: JobPdfFreshness } {
   return {
     ...job,
-    pdfFreshness: getJobPdfFreshness(job, context),
+    resumeFreshness: getJobPdfFreshness(job, context),
   };
 }
 
 export function applyJobsPdfFreshness<T extends JobPdfFreshnessInput>(
   jobs: T[],
   context: PdfFingerprintContext,
-): Array<T & { pdfFreshness: JobPdfFreshness }> {
+): Array<T & { resumeFreshness: JobPdfFreshness }> {
   return jobs.map((job) => applyJobPdfFreshness(job, context));
 }

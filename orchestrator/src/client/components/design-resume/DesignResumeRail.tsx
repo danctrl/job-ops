@@ -4,6 +4,11 @@ import {
   toggleAiSelectable,
   toggleMustInclude,
 } from "@client/pages/settings/resume-projects-state";
+import {
+  getSkillTailoringMode,
+  normalizeResumeSkills,
+  setSkillTailoringMode,
+} from "@client/pages/settings/resume-skills-state";
 import type {
   DesignResumeDocument,
   DesignResumeJson,
@@ -452,6 +457,44 @@ export function DesignResumeRail({
                   from_mode: fromMode,
                   to_mode: mode,
                   project_count_bucket: bucketCount(items.length),
+                });
+              },
+              disabled: !settings || updateSettingsMutation.isPending,
+              isSaving: updateSettingsMutation.isPending,
+            }
+          : undefined,
+      skillPolicy:
+        definition.key === "skills"
+          ? {
+              getMode: (groupId: string) =>
+                getSkillTailoringMode(
+                  normalizeResumeSkills(settings?.resumeSkills?.value ?? null),
+                  groupId,
+                ),
+              maxKeywords: normalizeResumeSkills(
+                settings?.resumeSkills?.value ?? null,
+              ).maxKeywords,
+              onMaxKeywordsChange: (maxKeywords: number) => {
+                const current = normalizeResumeSkills(
+                  settings?.resumeSkills?.value ?? null,
+                );
+                updateSettingsMutation.mutate({
+                  resumeSkills: {
+                    ...current,
+                    maxKeywords,
+                  },
+                });
+              },
+              onModeChange: (groupId: string, mode: ProjectTailoringMode) => {
+                const current = normalizeResumeSkills(
+                  settings?.resumeSkills?.value ?? null,
+                );
+                updateSettingsMutation.mutate({
+                  resumeSkills: setSkillTailoringMode({
+                    settings: current,
+                    groupId,
+                    mode,
+                  }),
                 });
               },
               disabled: !settings || updateSettingsMutation.isPending,

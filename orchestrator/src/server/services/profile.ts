@@ -2,9 +2,10 @@ import { logger } from "@infra/logger";
 import { getRequestContext } from "@infra/request-context";
 import { getActiveTenantId } from "@server/tenancy/context";
 import { getPrivateDataScope } from "@server/tenancy/private-scope";
-import type { ResumeProfile } from "@shared/types";
+import type { ChatStyleManualLanguage, ResumeProfile } from "@shared/types";
 import {
   designResumeToProfile,
+  getDesignResumeForLanguage,
   isLegacyDesignResumeError,
 } from "./design-resume";
 import { getResume, RxResumeAuthConfigError } from "./rxresume";
@@ -140,6 +141,31 @@ export async function getProfile(forceRefresh = false): Promise<ResumeProfile> {
     });
     throw error;
   }
+}
+
+/**
+ * Profile sourced from the hand-authored master for `language` when one exists,
+ * otherwise the primary profile. Used so German applications draw their cover
+ * letter (and other prose) from the German master.
+ */
+export async function getProfileForLanguage(
+  language: ChatStyleManualLanguage,
+): Promise<ResumeProfile> {
+  if (language && language !== "english") {
+    try {
+      const master = await getDesignResumeForLanguage(language);
+      if (master?.resumeJson) {
+        const profile = await designResumeToProfile(master.resumeJson);
+        if (profile) return profile;
+      }
+    } catch (error) {
+      logger.warn("Failed to load language master profile; using primary", {
+        language,
+        error,
+      });
+    }
+  }
+  return getProfile();
 }
 
 /**

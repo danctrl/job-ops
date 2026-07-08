@@ -4,6 +4,8 @@ import { buildDefaultReactiveResumeDocument } from "./rxresume/document";
 
 const repo = vi.hoisted(() => ({
   getLatestDesignResumeDocument: vi.fn(),
+  getDesignResumeDocumentForLanguage: vi.fn(),
+  listDesignResumeMasters: vi.fn(),
   getDesignResumeAssetById: vi.fn(),
   getDesignResumeAssetByIdAnyTenant: vi.fn(),
   listDesignResumeAssets: vi.fn(),
@@ -41,6 +43,11 @@ vi.mock("@server/services/rxresume/baseResumeId", () => ({
 vi.mock("@server/services/rxresume", () => ({
   getResume: vi.fn(),
 }));
+vi.mock("@server/services/resume-translation", () => ({
+  // Passthrough: the seed logic is what we test, not the LLM/localizer.
+  localizeResumeStaticText: vi.fn((json: unknown) => json),
+  translateResumeBody: vi.fn(async (json: unknown) => json),
+}));
 vi.mock("@server/services/tracer-links", () => ({
   resolveTracerPublicBaseUrl: vi.fn(() => null),
 }));
@@ -73,10 +80,13 @@ import { getResume } from "@server/services/rxresume";
 import { getConfiguredRxResumeBaseResumeId } from "@server/services/rxresume/baseResumeId";
 import { getPrivateDataScope } from "@server/tenancy/private-scope";
 import {
+  createLanguageMasterFromPrimary,
   deleteDesignResumePicture,
   getCurrentDesignResume,
   getCurrentDesignResumeOrNullOnLegacy,
+  getDesignResumeForLanguage,
   importDesignResumeFromReactiveResume,
+  listResumeMasters,
   readDesignResumeAssetContent,
   replaceCurrentDesignResumeDocument,
   updateCurrentDesignResume,
@@ -970,5 +980,85 @@ describe("design resume service", () => {
     expect(fsMocks.unlink).not.toHaveBeenCalledWith(
       "/tmp/job-ops-test/design-resume/assets/asset-1.png",
     );
+  });
+});
+
+describe("language-specific masters", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getPrivateDataScope).mockReturnValue({
+      tenantId: "tenant-test-2",
+      userId: null,
+      enforceUserIsolation: false,
+      scopeKey: "tenant-test-2",
+    });
+    repo.getLatestDesignResumeDocument.mockResolvedValue(makeDocumentRow());
+    repo.listDesignResumeAssets.mockResolvedValue([]);
+    repo.upsertDesignResumeDocument.mockImplementation(async (input) =>
+      makeDocumentRow({ ...input }),
+    );
+  });
+
+  it("getDesignResumeForLanguage returns the language master when present", async () => {
+    repo.getDesignResumeDocumentForLanguage.mockResolvedValue(
+      makeDocumentRow({
+        id: "primary_tenant-test-2_german",
+        language: "german",
+      }),
+    );
+
+    const doc = await getDesignResumeForLanguage("german");
+
+    expect(repo.getDesignResumeDocumentForLanguage).toHaveBeenCalledWith(
+      "german",
+    );
+    expect(doc?.language).toBe("german");
+  });
+
+  it("getDesignResumeForLanguage returns null when no master exists", async () => {
+    repo.getDesignResumeDocumentForLanguage.mockResolvedValue(null);
+    expect(await getDesignResumeForLanguage("german")).toBeNull();
+  });
+
+  it("createLanguageMasterFromPrimary rejects english", async () => {
+    await expect(createLanguageMasterFromPrimary("english")).rejects.toThrow();
+    expect(repo.upsertDesignResumeDocument).not.toHaveBeenCalled();
+  });
+
+  it("returns the existing master without re-seeding", async () => {
+    repo.getDesignResumeDocumentForLanguage.mockResolvedValue(
+      makeDocumentRow({
+        id: "primary_tenant-test-2_german",
+        language: "german",
+      }),
+    );
+
+    const doc = await createLanguageMasterFromPrimary("german");
+
+    expect(doc.language).toBe("german");
+    // No new row written — user edits are preserved.
+    expect(repo.upsertDesignResumeDocument).not.toHaveBeenCalled();
+  });
+
+  it("seeds a new German master from the primary with a language-suffixed id", async () => {
+    repo.getDesignResumeDocumentForLanguage.mockResolvedValue(null);
+
+    await createLanguageMasterFromPrimary("german");
+
+    expect(repo.upsertDesignResumeDocument).toHaveBeenCalledTimes(1);
+    const written = repo.upsertDesignResumeDocument.mock.calls[0][0];
+    expect(written.language).toBe("german");
+    expect(written.id).toContain("_german");
+  });
+
+  it("listResumeMasters maps a null language to english", async () => {
+    repo.listDesignResumeMasters.mockResolvedValue([
+      { id: "primary", title: "R", language: null, updatedAt: "t" },
+      { id: "primary_german", title: "R", language: "german", updatedAt: "t" },
+    ]);
+
+    const masters = await listResumeMasters();
+
+    expect(masters.map((m) => m.language)).toEqual(["english", "german"]);
   });
 });

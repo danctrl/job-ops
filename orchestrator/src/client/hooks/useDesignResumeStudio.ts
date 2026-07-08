@@ -24,10 +24,15 @@ import { useTracerReadiness } from "@client/hooks/useTracerReadiness";
 import type {
   DesignResumeDocument,
   DesignResumeJson,
+  LatexTheme,
   PdfRenderer,
   TypstTheme,
 } from "@shared/types";
-import { PDF_RENDERER_LABELS, TYPST_THEME_LABELS } from "@shared/types";
+import {
+  LATEX_THEME_LABELS,
+  PDF_RENDERER_LABELS,
+  TYPST_THEME_LABELS,
+} from "@shared/types";
 import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -37,11 +42,11 @@ import { downloadDesignResumePdf } from "@/client/lib/private-pdf";
 import { trackProductEvent } from "@/lib/analytics";
 import { queryKeys } from "../lib/queryKeys";
 
-export function useDesignResumeStudio() {
+export function useDesignResumeStudio(language?: string) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { section: sectionParam } = useParams<{ section?: string }>();
-  const { document, status, isLoading, error } = useDesignResume();
+  const { document, status, isLoading, error } = useDesignResume(language);
   const { settings, isLoading: settingsLoading } = useSettings();
   const { readiness: tracerReadiness } = useTracerReadiness();
   const [draft, setDraft] = useState<DesignResumeDocument | null>(null);
@@ -77,6 +82,7 @@ export function useDesignResumeStudio() {
 
   const pdfRenderer = settings?.pdfRenderer?.value ?? "rxresume";
   const typstTheme = settings?.typstTheme?.value ?? "classic";
+  const latexTheme = settings?.latexTheme?.value ?? "jake";
   const canDownloadPdf = status?.exists && !pdfDownloading;
   const pictureEnabled = Boolean(tracerReadiness?.isPubliclyAvailable);
   const pictureDisabledReason =
@@ -115,12 +121,18 @@ export function useDesignResumeStudio() {
 
       try {
         setSaveState("saving");
-        const updated = await api.updateDesignResume({
-          baseRevision,
-          document: documentSnapshot,
-        });
+        const updated = await api.updateDesignResume(
+          {
+            baseRevision,
+            document: documentSnapshot,
+          },
+          language,
+        );
         if (editVersionRef.current === editVersionAtStart) {
-          queryClient.setQueryData(queryKeys.designResume.current(), updated);
+          queryClient.setQueryData(
+            queryKeys.designResume.current(language),
+            updated,
+          );
           queryClient.setQueryData(queryKeys.designResume.status(), {
             exists: true,
             documentId: updated.id,
@@ -151,10 +163,18 @@ export function useDesignResumeStudio() {
     }, 700);
 
     return () => window.clearTimeout(timer);
-  }, [dirty, draft, document, notifyReadyPdfRefresh, queryClient, saveState]);
+  }, [
+    dirty,
+    draft,
+    document,
+    language,
+    notifyReadyPdfRefresh,
+    queryClient,
+    saveState,
+  ]);
 
   const setDesignResume = (next: DesignResumeDocument) => {
-    queryClient.setQueryData(queryKeys.designResume.current(), next);
+    queryClient.setQueryData(queryKeys.designResume.current(language), next);
     queryClient.setQueryData(queryKeys.designResume.status(), {
       exists: true,
       documentId: next.id,
@@ -162,6 +182,11 @@ export function useDesignResumeStudio() {
     });
     setDraft(next);
     setDirty(false);
+    // A new design-resume revision changes every job's PDF fingerprint, so the
+    // server marks generated PDFs stale and auto-regenerates them. Invalidate
+    // the job caches so any open job/documents view re-derives freshness and
+    // reflects the rebuild (mirrors the tailoring autosave onUpdate path).
+    void queryClient.invalidateQueries({ queryKey: queryKeys.jobs.all });
   };
 
   const ensureLatestPersistedDraft =
@@ -179,10 +204,13 @@ export function useDesignResumeStudio() {
       const documentSnapshot = structuredClone(draft.resumeJson);
 
       setSaveState("saving");
-      const updated = await api.updateDesignResume({
-        baseRevision,
-        document: documentSnapshot,
-      });
+      const updated = await api.updateDesignResume(
+        {
+          baseRevision,
+          document: documentSnapshot,
+        },
+        language,
+      );
 
       if (editVersionRef.current === editVersionAtStart) {
         setDesignResume(updated);
@@ -354,11 +382,11 @@ export function useDesignResumeStudio() {
     const downloadedAfterEdit = dirty || saveState === "saving";
     try {
       setPdfDownloading(true);
-      const generated = await api.generateDesignResumePdf();
+      const generated = await api.generateDesignResumePdf(language);
       await downloadDesignResumePdf(generated.fileName, generated.pdfUrl);
       trackProductEvent("resume_studio_pdf_downloaded", {
         renderer: pdfRenderer,
-        theme: typstTheme,
+        theme: pdfRenderer === "latex" ? latexTheme : typstTheme,
         after_edit: downloadedAfterEdit,
         result: "success",
       });
@@ -366,7 +394,7 @@ export function useDesignResumeStudio() {
     } catch (downloadError) {
       trackProductEvent("resume_studio_pdf_downloaded", {
         renderer: pdfRenderer,
-        theme: typstTheme,
+        theme: pdfRenderer === "latex" ? latexTheme : typstTheme,
         after_edit: downloadedAfterEdit,
         result: "error",
       });
@@ -488,6 +516,26 @@ export function useDesignResumeStudio() {
     }
   };
 
+  const handleLatexThemeChange = async (nextTheme: LatexTheme) => {
+    if (settingsLoading || nextTheme === latexTheme) return;
+
+    try {
+      setRendererUpdating(true);
+      const updatedSettings = await api.updateSettings({
+        latexTheme: nextTheme,
+      });
+      queryClient.setQueryData(queryKeys.settings.current(), updatedSettings);
+      toast.success(
+        `${LATEX_THEME_LABELS[nextTheme]} LaTeX template is active.`,
+      );
+      notifyReadyPdfRefresh();
+    } catch (updateError) {
+      showErrorToast(updateError, "Failed to update the LaTeX template.");
+    } finally {
+      setRendererUpdating(false);
+    }
+  };
+
   const activeSectionMeta = getSectionWorkspaceCopy(activeSection, draft);
   const activeGroup = activeSection
     ? DESIGN_RESUME_NAV_GROUPS.find((group) =>
@@ -566,6 +614,7 @@ export function useDesignResumeStudio() {
     activeDialogItem,
     pdfRenderer,
     typstTheme,
+    latexTheme,
     canDownloadPdf,
     pictureEnabled,
     pictureDisabledReason,
@@ -588,6 +637,7 @@ export function useDesignResumeStudio() {
     handleDeletePicture,
     handlePdfRendererChange,
     handleTypstThemeChange,
+    handleLatexThemeChange,
     handleMobileSectionSelect,
     getDesignResumeSectionBadge,
   };

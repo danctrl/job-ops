@@ -5,11 +5,14 @@ import { getJobOpsAppConfig } from "@server/config/app-mode";
 import { getRequestId } from "@server/infra/request-context";
 import { enqueueAutoPdfRegenerationForReadyJobs } from "@server/services/auto-pdf-regeneration";
 import {
+  createLanguageMasterFromPrimary,
   deleteDesignResumePicture,
   exportDesignResume,
   getCurrentDesignResume,
+  getDesignResumeForLanguage,
   getDesignResumeStatus,
   importDesignResumeFromReactiveResume,
+  listResumeMasters,
   readDesignResumeAssetContent,
   updateCurrentDesignResume,
   uploadDesignResumePicture,
@@ -22,11 +25,29 @@ import { getTenantDesignResumePdfPath } from "@server/services/pdf-storage";
 import { clearProfileCache } from "@server/services/profile";
 import { parseV5ResumeData } from "@server/services/rxresume/schema/v5";
 import { getJobOpsPublicAvailability } from "@server/services/tracer-links";
-import type { DesignResumeJson, DesignResumePatchRequest } from "@shared/types";
+import type {
+  ChatStyleManualLanguage,
+  DesignResumeJson,
+  DesignResumePatchRequest,
+} from "@shared/types";
+import { CHAT_STYLE_MANUAL_LANGUAGE_VALUES } from "@shared/types";
 import { type Request, type Response, Router } from "express";
 import { z } from "zod";
 
 export const designResumeRouter = Router();
+
+export const languageMasterSchema = z.object({
+  language: z.enum(CHAT_STYLE_MANUAL_LANGUAGE_VALUES),
+});
+
+/** Reads an optional `?language=` query param, ignoring unknown values. */
+function parseLanguageQuery(req: Request): ChatStyleManualLanguage | undefined {
+  const raw = req.query.language;
+  const parsed = z
+    .enum(CHAT_STYLE_MANUAL_LANGUAGE_VALUES)
+    .safeParse(typeof raw === "string" ? raw : undefined);
+  return parsed.success ? parsed.data : undefined;
+}
 
 function elapsedMs(startedAt: number): number {
   return Date.now() - startedAt;
@@ -257,8 +278,12 @@ function queueDesignResumeAutoPdfRegeneration(route: string): void {
 
 designResumeRouter.get(
   "/",
-  asyncRoute(async (_req: Request, res: Response) => {
-    const document = await getCurrentDesignResume();
+  asyncRoute(async (req: Request, res: Response) => {
+    const language = parseLanguageQuery(req);
+    const document =
+      language && language !== "english"
+        ? await getDesignResumeForLanguage(language)
+        : await getCurrentDesignResume();
     if (!document) {
       fail(res, notFound("Resume Studio has not been imported yet."));
       return;
@@ -332,6 +357,25 @@ designResumeRouter.post(
   }),
 );
 
+designResumeRouter.get(
+  "/languages",
+  asyncRoute(async (_req: Request, res: Response) => {
+    ok(res, { masters: await listResumeMasters() });
+  }),
+);
+
+designResumeRouter.post(
+  "/language-master",
+  asyncRoute(async (req: Request, res: Response) => {
+    const { language } = languageMasterSchema.parse(req.body);
+    const document = await createLanguageMasterFromPrimary(
+      language as ChatStyleManualLanguage,
+    );
+    clearProfileCache();
+    ok(res, document, 201);
+  }),
+);
+
 designResumeRouter.post(
   "/ai/field-suggestion",
   asyncRoute(async (req: Request, res: Response) => {
@@ -354,7 +398,10 @@ designResumeRouter.patch(
     const input = designResumePatchSchema.parse(
       req.body,
     ) as DesignResumePatchRequest;
-    const document = await updateCurrentDesignResume(input);
+    const document = await updateCurrentDesignResume(
+      input,
+      parseLanguageQuery(req),
+    );
     clearProfileCache();
     ok(res, document);
     queueDesignResumeAutoPdfRegeneration("PATCH /api/design-resume");
@@ -444,6 +491,7 @@ designResumeRouter.post(
       res,
       await generateDesignResumePdf({
         requestOrigin: resolveRequestOrigin(req),
+        language: parseLanguageQuery(req),
       }),
     );
   }),

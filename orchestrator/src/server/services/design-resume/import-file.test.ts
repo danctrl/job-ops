@@ -62,6 +62,7 @@ function makeResumeDocument(
     sourceResumeId: null,
     sourceMode: null,
     importedAt: "2026-04-11T00:00:00.000Z",
+    language: null,
     createdAt: "2026-04-11T00:00:00.000Z",
     updatedAt: "2026-04-11T00:00:00.000Z",
     assets: [],

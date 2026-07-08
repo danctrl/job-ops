@@ -1,6 +1,12 @@
 import * as api from "@client/api";
+import {
+  PDF_ZOOM_MAX,
+  PDF_ZOOM_MIN,
+  PDF_ZOOM_STEP,
+} from "@client/lib/pdf-preview";
 import type {
   DesignResumeDocument,
+  LatexTheme,
   PdfRenderer,
   TypstTheme,
 } from "@shared/types";
@@ -17,6 +23,7 @@ type DesignResumePdfPreviewProps = {
   draft: DesignResumeDocument;
   pdfRenderer: PdfRenderer;
   typstTheme: TypstTheme;
+  latexTheme: LatexTheme;
   isUpdatingRenderer: boolean;
   isDirty: boolean;
   saveState: "idle" | "saving" | "saved" | "error";
@@ -31,9 +38,6 @@ type PreviewScrollSnapshot = {
 
 const PDF_PAGE_HORIZONTAL_PADDING = 24;
 const PDF_MAX_RENDER_WIDTH = 900;
-const PDF_ZOOM_STEP = 0.1;
-const PDF_ZOOM_MIN = 0.5;
-const PDF_ZOOM_MAX = 2;
 
 GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.mjs",
@@ -76,6 +80,7 @@ export function DesignResumePdfPreview({
   draft,
   pdfRenderer,
   typstTheme,
+  latexTheme,
   isUpdatingRenderer,
   isDirty,
   saveState,
@@ -95,8 +100,9 @@ export function DesignResumePdfPreview({
   const latestPdfDocumentRef = useRef<PDFDocumentProxy | null>(null);
 
   const revisionKey = useMemo(
-    () => `${draft.id}:${draft.revision}:${pdfRenderer}:${typstTheme}`,
-    [draft.id, draft.revision, pdfRenderer, typstTheme],
+    () =>
+      `${draft.id}:${draft.revision}:${pdfRenderer}:${typstTheme}:${latexTheme}`,
+    [draft.id, draft.revision, pdfRenderer, typstTheme, latexTheme],
   );
   const renderWidth = Math.max(0, Math.floor(fitWidth * zoomLevel));
   const zoomPercentLabel = `${Math.round(zoomLevel * 100)}%`;
@@ -174,7 +180,7 @@ export function DesignResumePdfPreview({
     setIsRenderingPages(true);
 
     void api
-      .generateDesignResumePdf()
+      .generateDesignResumePdf(draft.language ?? undefined)
       .then(async (generated) => {
         const blob = await api.getDesignResumePdfBlob(generated.pdfUrl);
         return blob.arrayBuffer();
@@ -200,7 +206,7 @@ export function DesignResumePdfPreview({
 
         trackProductEvent("resume_studio_pdf_preview_completed", {
           renderer: pdfRenderer,
-          theme: typstTheme,
+          theme: pdfRenderer === "latex" ? latexTheme : typstTheme,
           result: "success",
           latency_bucket: bucketLatencyMs(Date.now() - startedAt),
         });
@@ -219,18 +225,20 @@ export function DesignResumePdfPreview({
         setIsRenderingPages(false);
         trackProductEvent("resume_studio_pdf_preview_completed", {
           renderer: pdfRenderer,
-          theme: typstTheme,
+          theme: pdfRenderer === "latex" ? latexTheme : typstTheme,
           result: "error",
           latency_bucket: bucketLatencyMs(Date.now() - startedAt),
         });
       });
   }, [
+    draft.language,
     isDirty,
     isUpdatingRenderer,
     pdfRenderer,
     revisionKey,
     saveState,
     typstTheme,
+    latexTheme,
   ]);
 
   useEffect(() => {
@@ -310,7 +318,7 @@ export function DesignResumePdfPreview({
         <div
           ref={viewerRef}
           data-testid="design-resume-pdf-scroll-container"
-          className="h-full overflow-auto bg-[#d9d9d9] px-6 py-8"
+          className="h-full overflow-auto bg-background/30 px-6 py-8"
         >
           <div className="mx-auto flex min-w-fit flex-col items-center gap-6">
             {Array.from({ length: pageCount }, (_, index) => index + 1).map(

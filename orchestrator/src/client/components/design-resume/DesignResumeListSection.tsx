@@ -76,6 +76,7 @@ type DesignResumeListSectionProps = {
   onEdit: (index: number) => void;
   onUpdateItems: (nextItems: Record<string, unknown>[]) => void;
   projectPolicy?: ProjectPolicyConfig;
+  skillPolicy?: SkillPolicyConfig;
   dragHandleProps?: {
     onDragStart: (event: DragEvent<HTMLButtonElement>) => void;
     onDragEnd: () => void;
@@ -105,7 +106,13 @@ type DesignResumeListItemCardProps = {
     projectId: string,
     mode: ProjectTailoringMode,
   ) => void;
+  onSkillModeChange: (
+    index: number,
+    groupId: string,
+    mode: ProjectTailoringMode,
+  ) => void;
   projectPolicy?: ProjectPolicyConfig;
+  skillPolicy?: SkillPolicyConfig;
 };
 
 export type ProjectTailoringMode = "manual" | "ai-selectable" | "must-include";
@@ -117,6 +124,15 @@ export type ProjectPolicyConfig = {
   minProjects: number;
   maxProjectsTotal: number;
   onMaxProjectsChange: (maxProjects: number) => void;
+  disabled?: boolean;
+  isSaving?: boolean;
+};
+
+export type SkillPolicyConfig = {
+  getMode: (groupId: string) => ProjectTailoringMode;
+  onModeChange: (groupId: string, mode: ProjectTailoringMode) => void;
+  maxKeywords: number;
+  onMaxKeywordsChange: (maxKeywords: number) => void;
   disabled?: boolean;
   isSaving?: boolean;
 };
@@ -230,7 +246,9 @@ function DesignResumeListItemCard({
   onDragOver,
   onDrop,
   onProjectModeChange,
+  onSkillModeChange,
   projectPolicy,
+  skillPolicy,
 }: DesignResumeListItemCardProps) {
   const isHidden = toBoolean(item.hidden, false);
   const primaryLabel = toText(
@@ -239,6 +257,10 @@ function DesignResumeListItemCard({
   );
   const secondaryLabel = getItemPreview(item, definition);
   const itemId = toText(item.id);
+  const canShowSkillPolicy =
+    definition.key === "skills" && skillPolicy && itemId;
+  const skillSelectedMode: ProjectTailoringMode | null =
+    canShowSkillPolicy && skillPolicy ? skillPolicy.getMode(itemId) : null;
   const canShowProjectPolicy =
     definition.key === "projects" && projectPolicy && itemId;
   const projectSettingsMode =
@@ -324,6 +346,16 @@ function DesignResumeListItemCard({
             />
           ) : null}
 
+          {canShowSkillPolicy && skillSelectedMode ? (
+            <ProjectTailoringModeControls
+              projectName={primaryLabel}
+              disabled={skillPolicy.disabled}
+              isSaving={skillPolicy.isSaving}
+              onModeChange={(mode) => onSkillModeChange(index, itemId, mode)}
+              selectedMode={skillSelectedMode}
+            />
+          ) : null}
+
           <div className="mt-4 border-t border-border/50 pt-3">
             <div className="flex flex-wrap items-center gap-2 text-sm">
               <Button
@@ -380,6 +412,7 @@ export function DesignResumeListSectionContent({
   onEdit,
   onUpdateItems,
   projectPolicy,
+  skillPolicy,
 }: DesignResumeListSectionProps) {
   const [pendingRemovalIndex, setPendingRemovalIndex] = useState<number | null>(
     null,
@@ -387,6 +420,7 @@ export function DesignResumeListSectionContent({
   const [draggingIndex, setDraggingIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const maxProjectsInputId = useId();
+  const maxSkillsInputId = useId();
   const cardRefs = useRef<Array<HTMLLIElement | null>>([]);
   const pendingRemovalItem = useMemo(
     () =>
@@ -416,6 +450,7 @@ export function DesignResumeListSectionContent({
 
   const showProjectPolicyControls =
     definition.key === "projects" && projectPolicy;
+  const showSkillPolicyControls = definition.key === "skills" && skillPolicy;
 
   const toggleItemHidden = (index: number) => {
     const isHidden = toBoolean(items[index]?.hidden, false);
@@ -446,6 +481,16 @@ export function DesignResumeListSectionContent({
     };
     onUpdateItems(nextItems);
     projectPolicy.onModeChange(projectId, mode);
+  };
+
+  const updateSkillInclusionMode = (
+    _index: number,
+    groupId: string,
+    mode: ProjectTailoringMode,
+  ) => {
+    if (!skillPolicy) return;
+    // Skills keep their own Hide/Visible toggle; the mode only drives tailoring.
+    skillPolicy.onModeChange(groupId, mode);
   };
 
   const resetDragState = () => {
@@ -565,6 +610,45 @@ export function DesignResumeListSectionContent({
               />
             </div>
           ) : null}
+          {showSkillPolicyControls ? (
+            <div className="flex items-center gap-2 w-full">
+              <Tip
+                asChild
+                content={
+                  <>
+                    Maximum number of skill keywords Job Tailoring includes in a
+                    tailored resume, across all groups. <br />
+                    <br /> Groups set to Always are guaranteed at least one
+                    keyword; the rest fill up to this limit by relevance.
+                  </>
+                }
+                contentClassName="max-w-96 text-center"
+              >
+                <label
+                  htmlFor={maxSkillsInputId}
+                  className="text-xs font-medium text-muted-foreground w-full"
+                >
+                  Maximum skill keywords in Tailored Resumes
+                </label>
+              </Tip>
+
+              <Input
+                id={maxSkillsInputId}
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={100}
+                value={skillPolicy.maxKeywords}
+                onChange={(event) => {
+                  skillPolicy.onMaxKeywordsChange(
+                    clampInt(Number(event.target.value), 0, 100),
+                  );
+                }}
+                disabled={skillPolicy.disabled || skillPolicy.isSaving}
+                className="text-center w-28"
+              />
+            </div>
+          ) : null}
         </div>
 
         {items.length === 0 ? (
@@ -600,7 +684,9 @@ export function DesignResumeListSectionContent({
                   }}
                   onDrop={handleDrop}
                   onProjectModeChange={updateProjectInclusionMode}
+                  onSkillModeChange={updateSkillInclusionMode}
                   projectPolicy={projectPolicy}
+                  skillPolicy={skillPolicy}
                 />
               );
             })}

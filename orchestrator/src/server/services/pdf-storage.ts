@@ -30,3 +30,10 @@ export function getLegacyJobPdfPath(jobId: string): string {
 export function getTenantDesignResumePdfPath(): string {
   return join(getTenantPdfDir(), "design_resume_current.pdf");
 }
+
+export function getTenantCoverLetterPdfPath(
+  jobId: string,
+  tenantId = getActiveTenantId(),
+): string {
+  return join(getTenantPdfDir(tenantId), `cover_letter_${jobId}.pdf`);
+}

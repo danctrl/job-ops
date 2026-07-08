@@ -11,8 +11,15 @@ import { getSetting } from "@server/repositories/settings";
 import { getJobOpsPublicAvailability } from "@server/services/tracer-links";
 import { safePdfFileName } from "@shared/filename-sanitizer";
 import { settingsRegistry } from "@shared/settings-registry";
-import type { DesignResumePdfResponse, PdfRenderer } from "@shared/types";
-import { getCurrentDesignResume } from "./design-resume";
+import type {
+  ChatStyleManualLanguage,
+  DesignResumePdfResponse,
+  PdfRenderer,
+} from "@shared/types";
+import {
+  getCurrentDesignResume,
+  getDesignResumeForLanguage,
+} from "./design-resume";
 import { resolveWritingOutputLanguageForResumeJson } from "./output-language";
 import {
   getLegacyJobPdfPath,
@@ -21,6 +28,11 @@ import {
   getTenantPdfDir,
 } from "./pdf-storage";
 import { renderResumePdf } from "./resume-renderer";
+import {
+  bracketizeResumeProse,
+  localizeResumeStaticText,
+  translateResumeBody,
+} from "./resume-translation";
 import {
   deleteResume as deleteRxResume,
   exportResumePdf as exportRxResumePdf,
@@ -48,6 +60,7 @@ export interface TailoredPdfContent {
   summary?: string | null;
   headline?: string | null;
   skills?: Array<{ name: string; keywords: string[] }> | null;
+  experience?: Array<{ company: string; bullets: string[] }> | string | null;
 }
 
 export interface GeneratePdfOptions {
@@ -79,11 +92,48 @@ async function resolveTypstTheme() {
   );
 }
 
+async function resolveLatexTheme() {
+  const storedValue = await getSetting("latexTheme");
+  return (
+    settingsRegistry.latexTheme.parse(storedValue ?? undefined) ??
+    settingsRegistry.latexTheme.default()
+  );
+}
+
+async function resolveLatexProjectLinkStyle() {
+  const storedValue = await getSetting("latexProjectLinkStyle");
+  return (
+    settingsRegistry.latexProjectLinkStyle.parse(storedValue ?? undefined) ??
+    settingsRegistry.latexProjectLinkStyle.default()
+  );
+}
+
 async function resolveLocalResumeLanguage(
   resumeJson: Record<string, unknown>,
   jobDescription?: string | null,
 ) {
   const writingStyle = await getWritingStyle();
+  return resolveWritingOutputLanguageForResumeJson({
+    style: writingStyle,
+    resumeJson,
+    jobDescription,
+  }).language;
+}
+
+/**
+ * Resolves the target render language before the base resume is loaded, so we
+ * can pick the language-specific master. Only "match-resume" mode needs a
+ * resume to detect from; there we use the primary master.
+ */
+async function resolveRenderTargetLanguage(
+  jobDescription?: string | null,
+): Promise<ChatStyleManualLanguage> {
+  const writingStyle = await getWritingStyle();
+  let resumeJson: Record<string, unknown> = {};
+  if (writingStyle.languageMode === "match-resume") {
+    const primary = await getCurrentDesignResume();
+    resumeJson = (primary?.resumeJson as Record<string, unknown>) ?? {};
+  }
   return resolveWritingOutputLanguageForResumeJson({
     style: writingStyle,
     resumeJson,
@@ -279,10 +329,25 @@ async function resolveDesignResumeForRenderer(args: {
 async function loadBaseResumeSource(args: {
   renderer: PdfRenderer;
   requestOrigin?: string | null;
+  language?: ChatStyleManualLanguage;
 }): Promise<{
   data: Record<string, unknown>;
   mode: "v5";
 }> {
+  // Prefer a hand-authored master for the target language when one exists, so
+  // tailoring merges onto the German text (and the translation pass no-ops).
+  if (args.language && args.language !== "english") {
+    const languageMaster = await getDesignResumeForLanguage(args.language);
+    if (languageMaster?.resumeJson) {
+      return {
+        data: parseV5ResumeData(
+          languageMaster.resumeJson as Record<string, unknown>,
+        ) as Record<string, unknown>,
+        mode: "v5",
+      };
+    }
+  }
+
   const designResume = await getCurrentDesignResume();
   if (designResume?.resumeJson) {
     if (args.renderer === "rxresume") {
@@ -347,9 +412,13 @@ export async function generatePdf(
     // Ensure output directory exists
     await ensureOutputDir();
 
+    // Resolve the target language up front so tailoring can merge onto the
+    // language-specific master (if any) rather than the English primary.
+    const language = await resolveRenderTargetLanguage(jobDescription);
     const baseResume = await loadBaseResumeSource({
       renderer,
       requestOrigin: options?.requestOrigin ?? null,
+      language,
     });
 
     let preparedResume: Awaited<
@@ -377,11 +446,34 @@ export async function generatePdf(
     }
 
     const outputPath = getTenantJobPdfPath(jobId);
+    // Localize onto the (possibly language-specific) base: section headings +
+    // dates deterministically, prose via the LLM pass — which no-ops when the
+    // base is already a hand-authored master in the target language.
+    preparedResume.data = localizeResumeStaticText(
+      preparedResume.data,
+      language,
+    );
+    preparedResume.data = await translateResumeBody(
+      preparedResume.data,
+      language,
+      jobId,
+    );
+    // Cosmetic: render round parentheses as square brackets (all themes + rxresume).
+    preparedResume.data = bracketizeResumeProse(preparedResume.data);
     if (renderer !== "rxresume") {
-      const [language, typstTheme] = await Promise.all([
-        resolveLocalResumeLanguage(preparedResume.data, jobDescription),
-        renderer === "typst" ? resolveTypstTheme() : Promise.resolve(undefined),
-      ]);
+      const [typstTheme, latexTheme, latexProjectLinkStyle] = await Promise.all(
+        [
+          renderer === "typst"
+            ? resolveTypstTheme()
+            : Promise.resolve(undefined),
+          renderer === "latex"
+            ? resolveLatexTheme()
+            : Promise.resolve(undefined),
+          renderer === "latex"
+            ? resolveLatexProjectLinkStyle()
+            : Promise.resolve(undefined),
+        ],
+      );
       await renderResumePdf({
         resumeJson: preparedResume.data,
         outputPath,
@@ -389,6 +481,8 @@ export async function generatePdf(
         language,
         renderer,
         typstTheme,
+        latexTheme,
+        latexProjectLinkStyle,
       });
     } else {
       await renderRxResumePdf({
@@ -414,52 +508,89 @@ export async function generatePdf(
 
 export async function generateDesignResumePdf(options?: {
   requestOrigin?: string | null;
+  language?: ChatStyleManualLanguage;
 }): Promise<DesignResumePdfResponse> {
   const renderer = await resolvePdfRenderer();
-  const designResume = await resolveDesignResumeForRenderer({
-    renderer,
-    requestOrigin: options?.requestOrigin ?? null,
-  });
+  const requestedLanguage =
+    options?.language && options.language !== "english"
+      ? options.language
+      : undefined;
+
+  // Preview/download the language-specific master when one is selected, else
+  // the primary. Falls back to the primary if the requested master is missing.
+  const languageMaster = requestedLanguage
+    ? await getDesignResumeForLanguage(requestedLanguage)
+    : null;
+  const source = languageMaster
+    ? {
+        documentId: languageMaster.id,
+        title: languageMaster.title,
+        data: parseV5ResumeData(
+          languageMaster.resumeJson as Record<string, unknown>,
+        ) as Record<string, unknown>,
+      }
+    : await resolveDesignResumeForRenderer({
+        renderer,
+        requestOrigin: options?.requestOrigin ?? null,
+      });
+
   const generatedAt = new Date().toISOString();
   const outputPath = getTenantDesignResumePdfPath();
   const preparedResume: PreparedRxResumePdfPayload = {
     mode: "v5",
-    data: structuredClone(designResume.data) as Record<string, unknown>,
+    data: structuredClone(source.data) as Record<string, unknown>,
     projectCatalog: [],
     selectedProjectIds: [],
   };
 
   await ensureOutputDir();
-  const language = await resolveLocalResumeLanguage(designResume.data);
+  const language =
+    requestedLanguage ?? (await resolveLocalResumeLanguage(source.data));
+  const localizedData = localizeResumeStaticText(source.data, language);
+  const translatedData = await translateResumeBody(
+    localizedData,
+    language,
+    "design-resume",
+  );
+  // Cosmetic: render round parentheses as square brackets (all themes + rxresume).
+  const styledData = bracketizeResumeProse(translatedData);
+  preparedResume.data = styledData;
 
   logger.info("Generating Design Resume PDF", {
     renderer,
-    documentId: designResume.documentId,
+    documentId: source.documentId,
+    language,
   });
 
   if (renderer !== "rxresume") {
     const typstTheme =
       renderer === "typst" ? await resolveTypstTheme() : undefined;
+    const latexTheme =
+      renderer === "latex" ? await resolveLatexTheme() : undefined;
+    const latexProjectLinkStyle =
+      renderer === "latex" ? await resolveLatexProjectLinkStyle() : undefined;
     await renderResumePdf({
-      resumeJson: designResume.data,
+      resumeJson: styledData,
       outputPath,
       jobId: "design-resume",
       language,
       renderer,
       typstTheme,
+      latexTheme,
+      latexProjectLinkStyle,
     });
   } else {
     await renderRxResumePdf({
       preparedResume,
       outputPath,
       jobId: "design-resume",
-      name: designResume.title,
+      name: source.title,
       requestOrigin: options?.requestOrigin ?? null,
     });
   }
 
   return {
-    fileName: safePdfFileName(designResume.title, {
+    fileName: safePdfFileName(source.title, {
       fallbackBase: "Design_Resume",
       language,
     }),

@@ -1,11 +1,20 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  cp,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { logger } from "@infra/logger";
 import { sanitizeUnknown } from "@infra/sanitize";
+import type { LatexTheme } from "@shared/types";
+import { buildAwesomeCvDocument } from "./awesome-cv";
 import { getLatexResumeSectionTitles } from "./document";
 import { materializeResumePicture } from "./picture";
 import type {
@@ -20,38 +29,33 @@ import type {
   ResumeRenderer,
 } from "./types";
 
-function resolveTemplatePath(): string {
+/**
+ * Resolve a path that ships alongside this module, falling back to a cwd-relative
+ * path. Works both when bundled (import.meta.url is a file URL) and from source.
+ */
+function resolveRendererPath(...segments: string[]): string {
   try {
     if (import.meta.url.startsWith("file:")) {
       const modulePath = fileURLToPath(import.meta.url);
-      const moduleRelativePath = join(
-        modulePath,
-        "..",
-        "templates",
-        "jake-resume.tex",
-      );
-      if (existsSync(moduleRelativePath)) {
-        return moduleRelativePath;
-      }
+      const candidate = join(modulePath, "..", ...segments);
+      if (existsSync(candidate)) return candidate;
     }
   } catch {
     // Fall through to cwd-based resolution below.
   }
 
   const cwd = process.cwd();
-  if (cwd.endsWith("/orchestrator")) {
-    return join(
-      cwd,
-      "src/server/services/resume-renderer/templates/jake-resume.tex",
-    );
-  }
-  return join(
-    cwd,
-    "orchestrator/src/server/services/resume-renderer/templates/jake-resume.tex",
-  );
+  const base = cwd.endsWith("/orchestrator")
+    ? join(cwd, "src/server/services/resume-renderer")
+    : join(cwd, "orchestrator/src/server/services/resume-renderer");
+  return join(base, ...segments);
 }
 
-const TEMPLATE_PATH = resolveTemplatePath();
+const TEMPLATE_PATH = resolveRendererPath("templates", "jake-resume.tex");
+export const DANCTRL_THEME_DIR = resolveRendererPath("latex-themes", "danctrl");
+const DANCTRL_TEMPLATE_PATH = join(DANCTRL_THEME_DIR, "template.tex");
+const DANCTRL_CLASS_FILE = "awesome-cv.cls";
+const DANCTRL_FONT_DIR = "fonts";
 const TECTONIC_TIMEOUT_MS = 120_000;
 const OUTPUT_FILENAME = "resume.pdf";
 
@@ -394,7 +398,7 @@ function renderLanguagesSection(document: LatexResumeDocument): string {
     const detailParts = [
       item.fluency ? escapeForCommand(item.fluency) : "",
       item.level !== null && item.level !== undefined
-        ? `Level ${escapeForCommand(String(item.level))}`
+        ? `${document.miscLabels?.level ?? "Level"} ${escapeForCommand(String(item.level))}`
         : "",
     ].filter(Boolean);
     const detail = detailParts.join(" | ");
@@ -521,6 +525,24 @@ async function loadTemplate(): Promise<string> {
   return await readFile(TEMPLATE_PATH, "utf8");
 }
 
+/**
+ * Copy the danctrl theme's class file and bundled fonts into the render working
+ * directory so the compiler finds them in cwd. fontspec loads the fonts from
+ * ./fonts/ by path, keeping rendering self-contained with no system font install.
+ * Shared with the danctrl cover-letter renderer, which uses the same class+fonts.
+ */
+export async function prepareDanctrlAssets(tempDir: string): Promise<void> {
+  await copyFile(
+    join(DANCTRL_THEME_DIR, DANCTRL_CLASS_FILE),
+    join(tempDir, DANCTRL_CLASS_FILE),
+  );
+  await cp(
+    join(DANCTRL_THEME_DIR, DANCTRL_FONT_DIR),
+    join(tempDir, DANCTRL_FONT_DIR),
+    { recursive: true },
+  );
+}
+
 export function buildLatexDocument(
   document: LatexResumeDocument,
   template: string,
@@ -632,20 +654,27 @@ async function runTectonic(args: {
 }
 
 export const latexResumeRenderer: ResumeRenderer = {
-  async render({ document, outputPath, jobId }) {
+  async render({ document, outputPath, jobId, latexTheme = "jake" }) {
     const tempDir = await mkdtemp(
       join(tmpdir(), `job-ops-resume-render-${jobId}-`),
     );
     const texPath = join(tempDir, "resume.tex");
     const compiledPdfPath = join(tempDir, OUTPUT_FILENAME);
+    const isDanctrl = latexTheme === "danctrl";
 
     try {
-      const template = await loadTemplate();
+      const template = isDanctrl
+        ? await readFile(DANCTRL_TEMPLATE_PATH, "utf8")
+        : await loadTemplate();
       const renderableDocument = await materializeResumePicture(
         document,
         tempDir,
       );
-      const latex = buildLatexDocument(renderableDocument, template);
+      const latex = isDanctrl
+        ? buildAwesomeCvDocument(renderableDocument, template)
+        : buildLatexDocument(renderableDocument, template);
+
+      if (isDanctrl) await prepareDanctrlAssets(tempDir);
 
       await writeFile(texPath, latex, "utf8");
       await runTectonic({ cwd: tempDir, texPath, jobId });
@@ -654,6 +683,7 @@ export const latexResumeRenderer: ResumeRenderer = {
       logger.info("Rendered LaTeX resume PDF", {
         jobId,
         outputPath,
+        latexTheme,
       });
     } catch (error) {
       logger.error("Failed to render LaTeX resume PDF", {
@@ -696,6 +726,7 @@ export async function renderLatexPdf(args: {
   document: LatexResumeDocument;
   outputPath: string;
   jobId: string;
+  latexTheme?: LatexTheme;
 }): Promise<void> {
   await latexResumeRenderer.render(args);
 }

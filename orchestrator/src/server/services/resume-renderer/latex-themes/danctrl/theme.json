@@ -1,0 +1,9 @@
+{
+  "id": "danctrl",
+  "label": "danctrl (Awesome-CV)",
+  "description": "Exact Awesome-CV design: Poppins body, JetBrains Mono name & section headings, emerald accent, FontAwesome contact icons.",
+  "engine": "xelatex",
+  "entrypoint": "template.tex",
+  "classFile": "awesome-cv.cls",
+  "fontDir": "fonts"
+}

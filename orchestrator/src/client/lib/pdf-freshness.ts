@@ -2,7 +2,7 @@ import type { Job, JobListItem } from "@shared/types";
 
 type PdfFreshnessCarrier = Pick<
   Job | JobListItem,
-  "pdfFreshness" | "pdfRegenerating"
+  "resumeFreshness" | "pdfRegenerating"
 >;
 
 export const STALE_PDF_MESSAGE =
@@ -13,9 +13,9 @@ export const PDF_REGENERATING_MESSAGE =
 
 export function getPdfFreshness(
   job: PdfFreshnessCarrier | null | undefined,
-): PdfFreshnessCarrier["pdfFreshness"] {
+): PdfFreshnessCarrier["resumeFreshness"] {
   if (job?.pdfRegenerating) return "regenerating";
-  return job?.pdfFreshness ?? "missing";
+  return job?.resumeFreshness ?? "missing";
 }
 
 export function isPdfStale(job: PdfFreshnessCarrier | null | undefined) {
@@ -31,11 +31,11 @@ export function getPdfActionLabels(
 ) {
   return isPdfStale(job)
     ? {
-        view: "View old PDF",
+        view: "Open old PDF",
         download: "Download old PDF",
       }
     : {
-        view: "View PDF",
+        view: "Open PDF",
         download: "Download PDF",
       };
 }

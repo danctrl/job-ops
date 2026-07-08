@@ -6,6 +6,12 @@ import {
 } from "@client/pages/settings/resume-projects-state";
 import type { ResumeProjectsSettingsInput } from "@shared/settings-schema.js";
 import {
+  LATEX_PROJECT_LINK_STYLE_LABELS,
+  LATEX_PROJECT_LINK_STYLE_VALUES,
+  LATEX_THEME_LABELS,
+  LATEX_THEME_VALUES,
+  type LatexProjectLinkStyle,
+  type LatexTheme,
   PDF_RENDERER_LABELS,
   PDF_RENDERER_VALUES,
   type PdfRenderer,
@@ -65,6 +71,12 @@ type ReactiveResumeConfigPanelProps = {
   typstTheme: TypstTheme;
   onTypstThemeChange: (theme: TypstTheme) => void;
   typstThemeError?: string;
+  latexTheme: LatexTheme;
+  onLatexThemeChange: (theme: LatexTheme) => void;
+  latexThemeError?: string;
+  latexProjectLinkStyle: LatexProjectLinkStyle;
+  onLatexProjectLinkStyleChange: (style: LatexProjectLinkStyle) => void;
+  latexProjectLinkStyleError?: string;
   disabled?: boolean;
   hasRxResumeAccess?: boolean;
   showValidationStatus?: boolean;
@@ -129,6 +141,12 @@ export const ReactiveResumeConfigPanel: React.FC<
   typstTheme,
   onTypstThemeChange,
   typstThemeError,
+  latexTheme,
+  onLatexThemeChange,
+  latexThemeError,
+  latexProjectLinkStyle,
+  onLatexProjectLinkStyleChange,
+  latexProjectLinkStyleError,
   disabled = false,
   hasRxResumeAccess = false,
   showValidationStatus = false,
@@ -156,7 +174,7 @@ export const ReactiveResumeConfigPanel: React.FC<
     rxresume:
       "RxResume export uses the upstream print/export endpoint for the final PDF.",
     latex:
-      "LaTeX renders PDFs locally with Jake's template and requires tectonic on the JobOps host.",
+      "LaTeX renders PDFs locally and requires tectonic on the JobOps host. Choose a template below.",
     typst: "Typst renders PDFs locally and supports selectable resume themes.",
   };
 
@@ -226,6 +244,77 @@ export const ReactiveResumeConfigPanel: React.FC<
           <p className="text-xs text-muted-foreground">
             Classic mirrors the current resume density; Compact fits more
             content on the page.
+          </p>
+        </div>
+      ) : null}
+
+      {pdfRenderer === "latex" ? (
+        <div className="space-y-2">
+          <label htmlFor="latexTheme" className="text-sm font-medium">
+            LaTeX template
+          </label>
+          <Select
+            value={latexTheme}
+            onValueChange={(value) => onLatexThemeChange(value as LatexTheme)}
+            disabled={disabled}
+          >
+            <SelectTrigger id="latexTheme">
+              <SelectValue placeholder="Choose LaTeX template" />
+            </SelectTrigger>
+            <SelectContent>
+              {LATEX_THEME_VALUES.filter((value) => value !== "jake").map(
+                (value) => (
+                  <SelectItem key={value} value={value}>
+                    {LATEX_THEME_LABELS[value]}
+                  </SelectItem>
+                ),
+              )}
+            </SelectContent>
+          </Select>
+          {latexThemeError ? (
+            <p className="text-xs text-destructive">{latexThemeError}</p>
+          ) : null}
+          <p className="text-xs text-muted-foreground">
+            danctrl is the exact Awesome-CV design (Poppins + JetBrains Mono,
+            emerald accent, FontAwesome icons).
+          </p>
+        </div>
+      ) : null}
+
+      {pdfRenderer === "latex" && latexTheme === "danctrl" ? (
+        <div className="space-y-2">
+          <label
+            htmlFor="latexProjectLinkStyle"
+            className="text-sm font-medium"
+          >
+            Project link style
+          </label>
+          <Select
+            value={latexProjectLinkStyle}
+            onValueChange={(value) =>
+              onLatexProjectLinkStyleChange(value as LatexProjectLinkStyle)
+            }
+            disabled={disabled}
+          >
+            <SelectTrigger id="latexProjectLinkStyle">
+              <SelectValue placeholder="Choose project link style" />
+            </SelectTrigger>
+            <SelectContent>
+              {LATEX_PROJECT_LINK_STYLE_VALUES.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {LATEX_PROJECT_LINK_STYLE_LABELS[value]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {latexProjectLinkStyleError ? (
+            <p className="text-xs text-destructive">
+              {latexProjectLinkStyleError}
+            </p>
+          ) : null}
+          <p className="text-xs text-muted-foreground">
+            Icon link shows the project name as a hyperlink with a link glyph;
+            Full URL prints the whole address beside the project.
           </p>
         </div>
       ) : null}

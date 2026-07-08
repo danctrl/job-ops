@@ -6,6 +6,7 @@ import type {
   LatexResumeEntry,
   LatexResumeInterestItem,
   LatexResumeLanguageItem,
+  LatexResumeMiscLabels,
   LatexResumeOrderedSectionKey,
   LatexResumePicture,
   LatexResumeProfileItem,
@@ -46,7 +47,7 @@ const LATEX_RESUME_SECTION_TITLES: Record<
     experience: "Berufserfahrung",
     education: "Ausbildung",
     projects: "Projekte",
-    skills: "Fachliche Kenntnisse",
+    skills: "Kompetenzen",
     languages: "Sprachen",
     interests: "Interessen",
     awards: "Auszeichnungen",
@@ -353,17 +354,26 @@ function buildExperienceEntries(resumeJson: RecordLike): LatexResumeEntry[] {
   );
 }
 
-function buildEducationEntries(resumeJson: RecordLike): LatexResumeEntry[] {
-  return getVisibleSectionItems(resumeJson, "education").map((item, index) => ({
-    title: toText(item.school, `Education ${index + 1}`),
-    subtitle:
-      joinNonEmpty([toText(item.degree), toText(item.area)], ", ") || null,
-    secondarySubtitle:
-      joinNonEmpty([toText(item.location), toText(item.grade)], " | ") || null,
-    date: toText(item.period) || null,
-    bullets: extractBullets(item.description),
-    url: toText(getByPath(item, "website.url")) || undefined,
-  }));
+function buildEducationEntries(
+  resumeJson: RecordLike,
+  gradeLabel: string,
+): LatexResumeEntry[] {
+  return getVisibleSectionItems(resumeJson, "education").map((item, index) => {
+    const area = joinNonEmpty([toText(item.degree), toText(item.area)], ", ");
+    const grade = toText(item.grade).trim();
+    return {
+      title: toText(item.school, `Education ${index + 1}`),
+      // Grade sits after the study area with a middot separator, not jammed
+      // against the location.
+      subtitle:
+        joinNonEmpty([area, grade ? `${gradeLabel}: ${grade}` : ""], " · ") ||
+        null,
+      secondarySubtitle: toText(item.location) || null,
+      date: toText(item.period) || null,
+      bullets: extractBullets(item.description),
+      url: toText(getByPath(item, "website.url")) || undefined,
+    };
+  });
 }
 
 function buildProjectEntries(resumeJson: RecordLike): LatexResumeEntry[] {
@@ -472,6 +482,63 @@ export function getLatexResumeSectionTitles(
   return LATEX_RESUME_SECTION_TITLES[language];
 }
 
+/** Localized micro-labels (grade prefix, level prefix, 1–5 proficiency words). */
+const LATEX_RESUME_MISC_LABELS: Record<
+  ChatStyleManualLanguage,
+  LatexResumeMiscLabels
+> = {
+  english: {
+    grade: "Grade",
+    level: "Level",
+    proficiency: {
+      1: "Beginner",
+      2: "Elementary",
+      3: "Intermediate",
+      4: "Advanced",
+      5: "Native",
+    },
+  },
+  german: {
+    grade: "Note",
+    level: "Niveau",
+    proficiency: {
+      1: "Grundkenntnisse",
+      2: "Erweiterte Kenntnisse",
+      3: "Fortgeschritten",
+      4: "Verhandlungssicher",
+      5: "Muttersprache",
+    },
+  },
+  french: {
+    grade: "Mention",
+    level: "Niveau",
+    proficiency: {
+      1: "Débutant",
+      2: "Élémentaire",
+      3: "Intermédiaire",
+      4: "Avancé",
+      5: "Langue maternelle",
+    },
+  },
+  spanish: {
+    grade: "Nota",
+    level: "Nivel",
+    proficiency: {
+      1: "Principiante",
+      2: "Básico",
+      3: "Intermedio",
+      4: "Avanzado",
+      5: "Nativo",
+    },
+  },
+};
+
+export function getLatexResumeMiscLabels(
+  language: ChatStyleManualLanguage = "english",
+): LatexResumeMiscLabels {
+  return LATEX_RESUME_MISC_LABELS[language];
+}
+
 export function normalizeResumeJsonToLatexDocument(
   resumeJson: Record<string, unknown>,
   options: NormalizeResumeJsonToLatexDocumentOptions = {},
@@ -480,6 +547,7 @@ export function normalizeResumeJsonToLatexDocument(
   const basics = (asRecord(record.basics) ?? {}) as RecordLike;
   const summary = (asRecord(record.summary) ?? {}) as RecordLike;
   const titles = getLatexResumeSectionTitles(options.language);
+  const miscLabels = getLatexResumeMiscLabels(options.language);
 
   return {
     name: toText(basics.name, "Your Name"),
@@ -494,7 +562,7 @@ export function normalizeResumeJsonToLatexDocument(
         ? stripHtml(toText(summary.content))
         : null,
     experience: buildExperienceEntries(record),
-    education: buildEducationEntries(record),
+    education: buildEducationEntries(record, miscLabels.grade),
     projects: buildProjectEntries(record),
     skillGroups: buildSkillGroups(record),
     languages: buildLanguageItems(record),
@@ -521,6 +589,8 @@ export function normalizeResumeJsonToLatexDocument(
       volunteer: getSectionTitle(record, "volunteer", titles),
       references: getSectionTitle(record, "references", titles),
     },
+    miscLabels,
+    projectLinkStyle: options.projectLinkStyle,
   };
 }
 

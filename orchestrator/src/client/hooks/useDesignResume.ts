@@ -7,10 +7,10 @@ import { queryClient as appQueryClient } from "@/client/lib/queryClient";
 import { queryKeys } from "@/client/lib/queryKeys";
 import * as api from "../api";
 
-export function useDesignResume() {
+export function useDesignResume(language?: string) {
   const documentQuery = useQuery<DesignResumeDocument | null>({
-    queryKey: queryKeys.designResume.current(),
-    queryFn: api.getDesignResume,
+    queryKey: queryKeys.designResume.current(language),
+    queryFn: () => api.getDesignResume(language),
     retry: false,
   });
 

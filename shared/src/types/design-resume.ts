@@ -352,6 +352,8 @@ export interface DesignResumeDocument {
   sourceResumeId: string | null;
   sourceMode: "v4" | "v5" | null;
   importedAt: string | null;
+  /** Null = the primary (English) master; a language code = a language-specific master. */
+  language: string | null;
   createdAt: string;
   updatedAt: string;
   assets: DesignResumeAsset[];

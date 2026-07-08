@@ -2,6 +2,8 @@ import { ReactiveResumeConfigPanel } from "@client/components/ReactiveResumeConf
 import { SettingsSectionFrame } from "@client/pages/settings/components/SettingsSectionFrame";
 import type { UpdateSettingsInput } from "@shared/settings-schema.js";
 import type {
+  LatexProjectLinkStyle,
+  LatexTheme,
   PdfRenderer,
   ResumeProjectCatalogItem,
   TypstTheme,
@@ -64,6 +66,14 @@ export const ReactiveResumeSection: React.FC<ReactiveResumeSectionProps> = ({
     control,
     name: "typstTheme",
   }) ?? "classic") as TypstTheme;
+  const latexThemeValue = (useWatch({
+    control,
+    name: "latexTheme",
+  }) ?? "jake") as LatexTheme;
+  const latexProjectLinkStyleValue = (useWatch({
+    control,
+    name: "latexProjectLinkStyle",
+  }) ?? "icon") as LatexProjectLinkStyle;
   const rxresumeApiKeyValue =
     useWatch({ control, name: "rxresumeApiKey" }) ?? "";
   const rxresumeUrlValue = useWatch({ control, name: "rxresumeUrl" }) ?? "";
@@ -99,6 +109,18 @@ export const ReactiveResumeSection: React.FC<ReactiveResumeSectionProps> = ({
           setDirtyTouchedValue("typstTheme", value)
         }
         typstThemeError={errors.typstTheme?.message as string | undefined}
+        latexTheme={latexThemeValue}
+        onLatexThemeChange={(value) =>
+          setDirtyTouchedValue("latexTheme", value)
+        }
+        latexThemeError={errors.latexTheme?.message as string | undefined}
+        latexProjectLinkStyle={latexProjectLinkStyleValue}
+        onLatexProjectLinkStyleChange={(value) =>
+          setDirtyTouchedValue("latexProjectLinkStyle", value)
+        }
+        latexProjectLinkStyleError={
+          errors.latexProjectLinkStyle?.message as string | undefined
+        }
         disabled={isLoading || isSaving}
         hasRxResumeAccess={hasRxResumeAccess}
         showValidationStatus={Boolean(validationStatus)}

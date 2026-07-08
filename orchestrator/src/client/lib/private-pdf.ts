@@ -38,6 +38,44 @@ export async function createJobPdfObjectUrl(jobId: string): Promise<string> {
   return createObjectUrlFromBlob(() => api.getJobPdfBlob(jobId));
 }
 
+export async function createJobCoverLetterObjectUrl(
+  jobId: string,
+): Promise<string> {
+  return createObjectUrlFromBlob(() => api.getJobCoverLetterBlob(jobId));
+}
+
+export async function createCoverLetterSamplePreviewObjectUrl(override?: {
+  renderer?: import("@shared/types").CoverLetterRenderer;
+  theme?: import("@shared/types").CoverLetterTheme;
+  latexTheme?: import("@shared/types").LatexTheme;
+}): Promise<string> {
+  return createObjectUrlFromBlob(() =>
+    api.getCoverLetterSamplePreviewBlob(override),
+  );
+}
+
+export async function downloadCoverLetterSamplePreview(
+  filename: string,
+  override?: {
+    renderer?: import("@shared/types").CoverLetterRenderer;
+    theme?: import("@shared/types").CoverLetterTheme;
+    latexTheme?: import("@shared/types").LatexTheme;
+  },
+): Promise<void> {
+  openBlob(await api.getCoverLetterSamplePreviewBlob(override), filename);
+}
+
+export async function openJobCoverLetter(jobId: string): Promise<void> {
+  openBlob(await api.getJobCoverLetterBlob(jobId));
+}
+
+export async function downloadJobCoverLetter(
+  jobId: string,
+  filename: string,
+): Promise<void> {
+  openBlob(await api.getJobCoverLetterBlob(jobId), filename);
+}
+
 export async function openJobDocument(
   jobId: string,
   document: JobDocumentTypeTarget & { id: string },

@@ -1,0 +1,40 @@
+% danctrl resume template (Awesome-CV) — uses __PLACEHOLDER__ tokens for substitution.
+% Compile with XeLaTeX (local) or Tectonic (production). The bundled awesome-cv.cls
+% loads Poppins + JetBrains Mono from the sibling ./fonts/ directory, so rendering is
+% self-contained and needs no system font installation.
+\documentclass[__FONTSIZE__, a4paper]{awesome-cv}
+
+\geometry{left=1.4cm, top=.8cm, right=1.4cm, bottom=1.4cm, footskip=.3cm}
+
+% Let justified text absorb the occasional long compound word ("Infrastructure-as-Code")
+% or URL into extra interword stretch and break onto the next line, instead of letting
+% it bleed past the right margin (overfull hbox). Only engages on lines that would
+% otherwise overflow, so well-fitting paragraphs are unaffected.
+\setlength{\emergencystretch}{3em}
+
+\colorlet{awesome}{awesome-emerald}
+\setbool{acvSectionColorHighlight}{true}
+\renewcommand{\acvHeaderSocialSep}{\hspace{1.4em}}
+
+% Soft off-white page background (matches the resume studio preview surface).
+\definecolor{pagebackground}{HTML}{F7F7F5}
+\pagecolor{pagebackground}
+
+%-------------------------------------------------------------------------------
+%	PERSONAL INFORMATION
+%-------------------------------------------------------------------------------
+__PERSONAL_INFO__
+
+%-------------------------------------------------------------------------------
+\begin{document}
+
+\vspace{8mm}
+\makecvheader[L]
+
+%-------------------------------------------------------------------------------
+%	CONTENT
+%-------------------------------------------------------------------------------
+__BODY__
+
+%-------------------------------------------------------------------------------
+\end{document}

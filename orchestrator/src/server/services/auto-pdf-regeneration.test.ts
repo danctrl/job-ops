@@ -44,6 +44,8 @@ vi.mock("./pdf-fingerprint", () => ({
     designResumeUpdatedAt: null,
     pdfRenderer: "latex",
     typstTheme: "classic",
+    latexTheme: "jake",
+    latexProjectLinkStyle: "icon",
     rxresumeBaseResumeId: null,
   }),
   getJobPdfFreshness: vi.fn((job: { pdfFingerprint?: string | null }) =>
@@ -84,6 +86,8 @@ describe("auto PDF regeneration", () => {
       designResumeUpdatedAt: null,
       pdfRenderer: "latex",
       typstTheme: "classic",
+      latexTheme: "jake",
+      latexProjectLinkStyle: "icon",
       rxresumeBaseResumeId: null,
     });
   });
@@ -135,7 +139,7 @@ describe("auto PDF regeneration", () => {
         reason: "settings_changed",
         requestedBy: "user",
       }),
-      { dedupeKey: "tenant-test:tenant:job-1" },
+      { dedupeKey: "tenant-test:tenant:job-1:settings_changed" },
     );
     expect(mocks.enqueue).toHaveBeenNthCalledWith(
       2,
@@ -147,7 +151,7 @@ describe("auto PDF regeneration", () => {
         reason: "settings_changed",
         requestedBy: "user",
       }),
-      { dedupeKey: "tenant-test:tenant:job-2" },
+      { dedupeKey: "tenant-test:tenant:job-2:settings_changed" },
     );
   });
 
@@ -181,7 +185,7 @@ describe("auto PDF regeneration", () => {
         userId: "user-a",
         jobId: "job-hosted",
       }),
-      { dedupeKey: "tenant-hosted:user-a:job-hosted" },
+      { dedupeKey: "tenant-hosted:user-a:job-hosted:settings_changed" },
     );
   });
 
@@ -213,7 +217,7 @@ describe("auto PDF regeneration", () => {
     expect(mocks.enqueue).toHaveBeenCalledWith(
       "auto_pdf_regeneration",
       expect.objectContaining({ jobId: "job-stale" }),
-      { dedupeKey: "tenant-test:tenant:job-stale" },
+      { dedupeKey: "tenant-test:tenant:job-stale:settings_changed" },
     );
   });
 
@@ -236,6 +240,8 @@ describe("auto PDF regeneration", () => {
       designResumeUpdatedAt: null,
       pdfRenderer: "typst",
       typstTheme: "compact",
+      latexTheme: "jake",
+      latexProjectLinkStyle: "icon",
       rxresumeBaseResumeId: null,
     });
     mocks.getReadyJobsWithGeneratedPdfs.mockResolvedValue([
@@ -257,7 +263,7 @@ describe("auto PDF regeneration", () => {
     expect(mocks.enqueue).toHaveBeenCalledWith(
       "auto_pdf_regeneration",
       expect.objectContaining({ jobId: "job-typst" }),
-      { dedupeKey: "tenant-test:tenant:job-typst" },
+      { dedupeKey: "tenant-test:tenant:job-typst:settings_changed" },
     );
   });
 

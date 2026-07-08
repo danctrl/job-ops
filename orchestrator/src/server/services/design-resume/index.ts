@@ -10,6 +10,10 @@ import { getDataDir } from "@server/config/dataDir";
 import * as designResumeRepo from "@server/repositories/design-resume";
 import { getSetting } from "@server/repositories/settings";
 import { getOriginalEnvValue } from "@server/services/envSettings";
+import {
+  localizeResumeStaticText,
+  translateResumeBody,
+} from "@server/services/resume-translation";
 import { getResume } from "@server/services/rxresume";
 import { getConfiguredRxResumeBaseResumeId } from "@server/services/rxresume/baseResumeId";
 import { getResumeSchemaValidationMessage } from "@server/services/rxresume/schema";
@@ -20,6 +24,7 @@ import {
 import { getActiveTenantId } from "@server/tenancy/context";
 import { getPrivateDataScope } from "@server/tenancy/private-scope";
 import type {
+  ChatStyleManualLanguage,
   DesignResumeAsset,
   DesignResumeDocument,
   DesignResumeExportResponse,
@@ -48,14 +53,18 @@ function getDesignResumeAssetDir(): string {
   return DESIGN_RESUME_ASSET_DIR;
 }
 
-function buildTenantScopedDesignResumeDocumentId(): string {
+function buildTenantScopedDesignResumeDocumentId(
+  language?: string | null,
+): string {
   const scope = getPrivateDataScope();
+  const suffix = language && language !== "english" ? `_${language}` : "";
   if (scope.enforceUserIsolation && scope.userId) {
     return [DESIGN_RESUME_DEFAULT_ID, scope.tenantId, scope.userId]
       .map((part) => part.replace(/[^a-zA-Z0-9_-]/g, "_"))
-      .join("_");
+      .join("_")
+      .concat(suffix);
   }
-  return `${DESIGN_RESUME_DEFAULT_ID}_${getActiveTenantId()}`;
+  return `${DESIGN_RESUME_DEFAULT_ID}_${getActiveTenantId()}${suffix}`;
 }
 
 type JsonPatchOperation = NonNullable<
@@ -482,6 +491,7 @@ async function hydrateDocument(
     sourceResumeId: documentRow.sourceResumeId ?? null,
     sourceMode: (documentRow.sourceMode as "v4" | "v5" | null) ?? null,
     importedAt: documentRow.importedAt ?? null,
+    language: documentRow.language ?? null,
     createdAt: documentRow.createdAt,
     updatedAt: documentRow.updatedAt,
     assets: assets.map(toDesignResumeAsset),
@@ -745,6 +755,85 @@ export async function getCurrentDesignResume(): Promise<DesignResumeDocument | n
   }
 }
 
+/**
+ * The master hand-authored for `language`, or null when none exists.
+ * "english" resolves to the primary master.
+ */
+export async function getDesignResumeForLanguage(
+  language: ChatStyleManualLanguage,
+): Promise<DesignResumeDocument | null> {
+  try {
+    return hydrateDocument(
+      await designResumeRepo.getDesignResumeDocumentForLanguage(language),
+    );
+  } catch (error) {
+    if (isMissingDesignResumeTableError(error)) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+/** All masters that exist, as lightweight `{ language, title }` for the UI switcher. */
+export async function listResumeMasters(): Promise<
+  Array<{ language: string; title: string; id: string }>
+> {
+  try {
+    const rows = await designResumeRepo.listDesignResumeMasters();
+    return rows.map((row) => ({
+      id: row.id,
+      title: row.title,
+      language: row.language ?? "english",
+    }));
+  } catch (error) {
+    if (isMissingDesignResumeTableError(error)) {
+      return [];
+    }
+    throw error;
+  }
+}
+
+/**
+ * Creates a language-specific master by seeding it from the primary: the same
+ * deterministic localization + one-time LLM translation used at render time,
+ * producing a draft the user then hand-edits. Returns the existing master
+ * untouched if one already exists for that language (never clobbers edits).
+ */
+export async function createLanguageMasterFromPrimary(
+  language: ChatStyleManualLanguage,
+): Promise<DesignResumeDocument> {
+  if (language === "english") {
+    throw badRequest("English is the primary master; it can't be duplicated.");
+  }
+
+  const existing = await getDesignResumeForLanguage(language);
+  if (existing) {
+    return existing;
+  }
+
+  const primary = await requireCurrentDesignResume();
+  const localized = localizeResumeStaticText(
+    primary.resumeJson as Record<string, unknown>,
+    language,
+  );
+  const seeded = await translateResumeBody(localized, language);
+
+  const now = new Date().toISOString();
+  const saved = await designResumeRepo.upsertDesignResumeDocument({
+    id: buildTenantScopedDesignResumeDocumentId(language),
+    title: primary.title,
+    resumeJson: seeded,
+    revision: 1,
+    sourceResumeId: null,
+    sourceMode: primary.sourceMode,
+    importedAt: now,
+    language,
+    updatedAt: now,
+  });
+
+  return (await hydrateDocument(saved)) as DesignResumeDocument;
+}
+
 export async function getCurrentDesignResumeOrNullOnLegacy(): Promise<DesignResumeDocument | null> {
   try {
     return await getCurrentDesignResume();
@@ -864,8 +953,15 @@ async function localizeImportedDesignResumePicture(
 
 export async function updateCurrentDesignResume(
   input: DesignResumePatchRequest,
+  language?: ChatStyleManualLanguage,
 ): Promise<DesignResumeDocument> {
-  const current = await requireCurrentDesignResume();
+  const current =
+    language && language !== "english"
+      ? await getDesignResumeForLanguage(language)
+      : await requireCurrentDesignResume();
+  if (!current) {
+    throw notFound(`No ${language} master exists yet.`);
+  }
   if (current.revision !== input.baseRevision) {
     throw conflict("Resume Studio has changed. Refresh and try again.");
   }
@@ -899,6 +995,7 @@ export async function updateCurrentDesignResume(
     sourceResumeId: current.sourceResumeId,
     sourceMode: current.sourceMode,
     importedAt: current.importedAt,
+    language: current.language,
     updatedAt: now,
   });
 

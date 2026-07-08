@@ -18,16 +18,20 @@ import {
 import { PageHeader, PageMain } from "@client/components/layout";
 import { SectionWorkspacePanel } from "@client/components/section-workspace/SectionWorkspace";
 import { useDesignResumeStudio } from "@client/hooks/useDesignResumeStudio";
+import { queryKeys } from "@client/lib/queryKeys";
 import type { DesignResumeJson } from "@shared/types";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Download,
   FileDown,
   Import,
   ListPlus,
+  Loader2,
   MoreHorizontal,
   PenSquare,
 } from "lucide-react";
 import type React from "react";
+import { useState } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import {
   AlertDialog,
@@ -55,10 +59,39 @@ import {
 } from "@/components/ui/sheet";
 import { bucketCount, trackProductEvent } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
+import * as api from "../api";
 import { formatUserFacingError } from "../lib/error-format";
+import { showErrorToast } from "../lib/error-toast";
 
 export const DesignResumePage: React.FC = () => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [language, setLanguage] = useState<string>("english");
+  const [creatingMaster, setCreatingMaster] = useState(false);
+  const { data: mastersData } = useQuery({
+    queryKey: queryKeys.designResume.masters(),
+    queryFn: api.getResumeMasters,
+  });
+  const germanMasterExists = (mastersData?.masters ?? []).some(
+    (master) => master.language === "german",
+  );
+
+  const handleCreateGermanMaster = async () => {
+    setCreatingMaster(true);
+    try {
+      const doc = await api.createLanguageMaster("german");
+      queryClient.setQueryData(queryKeys.designResume.current("german"), doc);
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.designResume.masters(),
+      });
+      setLanguage("german");
+    } catch (createError) {
+      showErrorToast(createError, "Failed to create the German master.");
+    } finally {
+      setCreatingMaster(false);
+    }
+  };
+
   const {
     draft,
     dirty,
@@ -82,6 +115,7 @@ export const DesignResumePage: React.FC = () => {
     activeDialogItem,
     pdfRenderer,
     typstTheme,
+    latexTheme,
     canDownloadPdf,
     pictureEnabled,
     pictureDisabledReason,
@@ -101,9 +135,10 @@ export const DesignResumePage: React.FC = () => {
     handleDeletePicture,
     handlePdfRendererChange,
     handleTypstThemeChange,
+    handleLatexThemeChange,
     handleMobileSectionSelect,
     getDesignResumeSectionBadge,
-  } = useDesignResumeStudio();
+  } = useDesignResumeStudio(language === "english" ? undefined : language);
 
   if (!activeSectionIsValid) {
     return <Navigate to="/design-resume" replace />;
@@ -182,6 +217,42 @@ export const DesignResumePage: React.FC = () => {
         subtitle="Edit your resume details"
         actions={
           <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap sm:justify-end">
+            <div className="flex items-center gap-1 rounded-md border border-border/60 p-0.5">
+              <Button
+                type="button"
+                size="sm"
+                variant={language === "english" ? "secondary" : "ghost"}
+                onClick={() => setLanguage("english")}
+                aria-pressed={language === "english"}
+              >
+                EN
+              </Button>
+              {germanMasterExists ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={language === "german" ? "secondary" : "ghost"}
+                  onClick={() => setLanguage("german")}
+                  aria-pressed={language === "german"}
+                >
+                  DE
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleCreateGermanMaster}
+                  disabled={creatingMaster || !status?.exists}
+                  title="Create a German master from your English resume"
+                >
+                  {creatingMaster ? (
+                    <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                  ) : null}
+                  {creatingMaster ? "Creating DE" : "+ DE"}
+                </Button>
+              )}
+            </div>
             <div className="hidden items-center gap-2 sm:flex">
               <Button
                 type="button"
@@ -211,9 +282,13 @@ export const DesignResumePage: React.FC = () => {
                 type="button"
                 variant="outline"
                 onClick={handleDownloadPdf}
-                disabled={!canDownloadPdf}
+                disabled={!canDownloadPdf || pdfDownloading}
               >
-                <FileDown className="mr-2 h-4 w-4" />
+                {pdfDownloading ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <FileDown className="mr-2 h-4 w-4" />
+                )}
                 {pdfDownloading ? "Preparing PDF" : "Download PDF"}
               </Button>
 
@@ -224,7 +299,7 @@ export const DesignResumePage: React.FC = () => {
                 disabled={!status?.exists}
               >
                 <Download className="mr-2 h-4 w-4" />
-                Export
+                Export JSON
               </Button>
             </div>
 
@@ -261,9 +336,13 @@ export const DesignResumePage: React.FC = () => {
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={() => handleDownloadPdf()}
-                  disabled={!canDownloadPdf}
+                  disabled={!canDownloadPdf || pdfDownloading}
                 >
-                  <FileDown className="mr-2 h-4 w-4" />
+                  {pdfDownloading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileDown className="mr-2 h-4 w-4" />
+                  )}
                   {pdfDownloading ? "Preparing PDF" : "Download PDF"}
                 </DropdownMenuItem>
                 <DropdownMenuItem
@@ -463,11 +542,13 @@ export const DesignResumePage: React.FC = () => {
                 draft={draft}
                 pdfRenderer={pdfRenderer}
                 typstTheme={typstTheme}
+                latexTheme={latexTheme}
                 isUpdatingRenderer={rendererUpdating || settingsLoading}
                 isDirty={dirty}
                 saveState={saveState}
                 onPdfRendererChange={handlePdfRendererChange}
                 onTypstThemeChange={handleTypstThemeChange}
+                onLatexThemeChange={handleLatexThemeChange}
               />
             </div>
           </>

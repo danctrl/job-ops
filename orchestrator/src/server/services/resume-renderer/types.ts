@@ -1,4 +1,9 @@
-import type { ChatStyleManualLanguage, TypstTheme } from "@shared/types";
+import type {
+  ChatStyleManualLanguage,
+  LatexProjectLinkStyle,
+  LatexTheme,
+  TypstTheme,
+} from "@shared/types";
 
 export interface LatexResumeContactItem {
   text: string;
@@ -91,6 +96,16 @@ export type LatexResumeOrderedSectionKey =
   | "volunteer"
   | "references";
 
+/** Localized micro-labels not covered by section titles. */
+export interface LatexResumeMiscLabels {
+  /** Education grade prefix, e.g. "Grade" / "Note". */
+  grade: string;
+  /** Numeric language-level prefix, e.g. "Level" / "Niveau". */
+  level: string;
+  /** Fallback words for a 1–5 language proficiency level. */
+  proficiency: Record<number, string>;
+}
+
 export interface LatexResumeDocument {
   name: string;
   headline?: string | null;
@@ -113,6 +128,10 @@ export interface LatexResumeDocument {
   references: LatexResumeEntry[];
   sectionOrder?: LatexResumeOrderedSectionKey[];
   sectionTitles?: LatexResumeSectionTitles;
+  /** Localized micro-labels (grade, level, proficiency words). */
+  miscLabels?: LatexResumeMiscLabels;
+  /** danctrl/Awesome-CV only: how project links render (full URL vs icon). */
+  projectLinkStyle?: LatexProjectLinkStyle;
 }
 
 export interface RenderResumePdfArgs {
@@ -120,6 +139,7 @@ export interface RenderResumePdfArgs {
   outputPath: string;
   jobId: string;
   typstTheme?: TypstTheme;
+  latexTheme?: LatexTheme;
 }
 
 export interface ResumeRenderer {
@@ -128,6 +148,7 @@ export interface ResumeRenderer {
 
 export interface NormalizeResumeJsonToLatexDocumentOptions {
   language?: ChatStyleManualLanguage;
+  projectLinkStyle?: LatexProjectLinkStyle;
 }
 
 export type ResumeRenderContactItem = LatexResumeContactItem;

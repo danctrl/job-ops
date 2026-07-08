@@ -228,6 +228,11 @@ describe("normalizeResumeJsonToLatexDocument", () => {
     expect(document.summary).toBe("Builds resilient platform systems.");
     expect(document.experience).toHaveLength(1);
     expect(document.education).toHaveLength(1);
+    // Grade goes after the study area (middot-separated), not on the location.
+    expect(document.education[0].subtitle).toBe(
+      "MSc, Computer Science · Grade: Distinction",
+    );
+    expect(document.education[0].secondarySubtitle).toBe("London");
     expect(document.projects).toHaveLength(1);
     expect(document.skillGroups).toHaveLength(1);
     expect(document.languages).toHaveLength(1);

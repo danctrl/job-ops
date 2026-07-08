@@ -7,6 +7,11 @@ import type { SettingKey } from "@server/repositories/settings";
 import { getPrivateDataScope } from "@server/tenancy/private-scope";
 import type { Job } from "@shared/types";
 import { generateFinalPdf } from "../pipeline";
+import { rerenderCoverLetter } from "./cover-letter";
+import {
+  getCoverLetterFreshness,
+  resolveCoverLetterFingerprintContext,
+} from "./cover-letter-fingerprint";
 import {
   getJobPdfFreshness,
   resolvePdfFingerprintContext,
@@ -18,21 +23,28 @@ const AUTO_PDF_REGEN_RETRY_DELAY_MS = 5000;
 const SETTINGS_INVALIDATION_KEYS = new Set<SettingKey>([
   "pdfRenderer",
   "typstTheme",
+  "latexTheme",
   "rxresumeBaseResumeId",
   "rxresumeUrl",
   "rxresumeApiKey",
 ]);
 
-function onlyInvalidatesTypstTheme(
+/**
+ * True when the only invalidating change is `themeKey`. A theme change only
+ * affects output produced by that renderer, so the caller can skip regeneration
+ * when a different renderer is active.
+ */
+function onlyInvalidatesThemeSetting(
   updatedSettingKeys: ReadonlyArray<SettingKey>,
+  themeKey: SettingKey,
 ): boolean {
-  let foundTypstTheme = false;
+  let foundThemeKey = false;
   for (const key of updatedSettingKeys) {
     if (!SETTINGS_INVALIDATION_KEYS.has(key)) continue;
-    if (key !== "typstTheme") return false;
-    foundTypstTheme = true;
+    if (key !== themeKey) return false;
+    foundThemeKey = true;
   }
-  return foundTypstTheme;
+  return foundThemeKey;
 }
 
 let workerPromise: Promise<void> | null = null;
@@ -185,6 +197,38 @@ async function processQueuedAutoPdfRegeneration(input: {
         return "processed";
       }
 
+      if (input.reason === "cover_letter_updated") {
+        // Only auto-rebuild a cover letter that was already generated (mirrors
+        // the resume gate on pdfSource === "generated").
+        if (job.coverLetterSource !== "generated") {
+          return "processed";
+        }
+        if (job.coverLetterRegenerating) {
+          return "retry_later";
+        }
+        const coverLetterContext = await resolveCoverLetterFingerprintContext();
+        if (getCoverLetterFreshness(job, coverLetterContext) !== "stale") {
+          return "processed";
+        }
+
+        await jobsRepo.updateJob(job.id, { coverLetterRegenerating: true });
+        try {
+          const result = await rerenderCoverLetter(job.id);
+          if (!result.success) {
+            throw new Error(
+              result.error ?? "Auto cover letter regeneration failed.",
+            );
+          }
+          // rerenderCoverLetter -> setJobCoverLetter already cleared the flag.
+          return "processed";
+        } catch (error) {
+          await jobsRepo.updateJob(job.id, {
+            coverLetterRegenerating: false,
+          });
+          throw error;
+        }
+      }
+
       if (job.pdfSource !== "generated") {
         return "processed";
       }
@@ -227,6 +271,7 @@ async function enqueueAutoPdfRegenerationPayload(
       payload.tenantId,
       payload.userId ?? "tenant",
       payload.jobId,
+      payload.reason,
     ].join(":"),
     delayMs: options?.delayMs,
   });
@@ -279,9 +324,14 @@ export async function enqueueAutoPdfRegenerationForSettingsChanges(input: {
   );
   if (!shouldRegenerate) return 0;
 
-  if (onlyInvalidatesTypstTheme(input.updatedSettingKeys)) {
+  if (onlyInvalidatesThemeSetting(input.updatedSettingKeys, "typstTheme")) {
     const fingerprintContext = await resolvePdfFingerprintContext();
     if (fingerprintContext.pdfRenderer !== "typst") return 0;
+  }
+
+  if (onlyInvalidatesThemeSetting(input.updatedSettingKeys, "latexTheme")) {
+    const fingerprintContext = await resolvePdfFingerprintContext();
+    if (fingerprintContext.pdfRenderer !== "latex") return 0;
   }
 
   return enqueueAutoPdfRegenerationForReadyJobs({
@@ -304,6 +354,8 @@ export function shouldEnqueueTailoringAutoPdfRegeneration(
     previousJob.selectedProjectIds !== nextJob.selectedProjectIds ||
     previousJob.jobDescription !== nextJob.jobDescription ||
     previousJob.tracerLinksEnabled !== nextJob.tracerLinksEnabled ||
-    previousJob.employer !== nextJob.employer
+    previousJob.employer !== nextJob.employer ||
+    previousJob.title !== nextJob.title ||
+    previousJob.location !== nextJob.location
   );
 }

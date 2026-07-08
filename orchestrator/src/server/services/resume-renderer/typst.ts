@@ -390,7 +390,12 @@ function renderLanguagesSection(document: LatexResumeDocument): string {
   if (document.languages.length === 0) return "";
   const titles = document.sectionTitles ?? getLatexResumeSectionTitles();
   const lines = document.languages.map((item: LatexResumeLanguageItem) => {
-    const detail = [item.fluency, item.level ? `Level ${item.level}` : ""]
+    const detail = [
+      item.fluency,
+      item.level
+        ? `${document.miscLabels?.level ?? "Level"} ${item.level}`
+        : "",
+    ]
       .filter(Boolean)
       .map((part) => escapeTypstText(String(part)))
       .join(" | ");
