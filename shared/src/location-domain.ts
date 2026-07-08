@@ -163,11 +163,13 @@ export interface LocationMatchResult {
     | "selected_location"
     | "remote_worldwide"
     | "unfiltered"
+    | "office_out_of_city"
     | "no_match";
   reasonCode:
     | "selected_location"
     | "remote_worldwide"
     | "unfiltered"
+    | "office_out_of_city"
     | "no_match";
   priority: 0 | 1;
   intent: LocationIntent;
@@ -709,6 +711,12 @@ export function matchLocationIntent(
       ? normalizeCountryKey(normalizedEvidence.country) === selectedCountry
       : matchesRequestedCountry(evidenceLocation, selectedCountry);
 
+  // Hybrid/on-site roles need the office to be in a requested city; only
+  // remote-capable roles may match a city flexibly (no commute required).
+  const requiresOffice =
+    normalizedEvidence.workplaceType === "hybrid" ||
+    normalizedEvidence.workplaceType === "onsite";
+
   if (countryMatched) {
     if (requestedCities.length === 0) {
       return {
@@ -742,7 +750,10 @@ export function matchLocationIntent(
       );
     });
 
-    if (cityMatched || normalizedIntent.matchStrictness === "flexible") {
+    if (
+      cityMatched ||
+      (normalizedIntent.matchStrictness === "flexible" && !requiresOffice)
+    ) {
       return {
         matched: true,
         matchedBy: "selected_location",
@@ -762,6 +773,23 @@ export function matchLocationIntent(
               `Selected country ${formatCountryLabel(selectedCountry)} matched.`,
               "City did not match exactly, but flexible matching was allowed.",
             ],
+      };
+    }
+    if (requiresOffice) {
+      return {
+        matched: false,
+        matchedBy: "office_out_of_city",
+        reasonCode: "office_out_of_city",
+        priority: 0,
+        intent: normalizedIntent,
+        evidence: normalizedEvidence,
+        countryMatched: true,
+        cityMatched: false,
+        remoteMatched: false,
+        reasons: [
+          `Selected country ${formatCountryLabel(selectedCountry)} matched.`,
+          "On-site/hybrid role is not in a requested city (commute required).",
+        ],
       };
     }
   }

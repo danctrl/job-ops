@@ -10,10 +10,12 @@ import type {
   JobLocationEvidence,
   JobSource,
 } from "@shared/types/jobs";
+import { normalizeContractType } from "@shared/utils/contract.js";
 import {
   toNumberOrNull,
   toStringOrNull,
 } from "@shared/utils/type-conversion.js";
+import { resolveWorkMode } from "@shared/utils/workplace.js";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const EXTRACTOR_DIR = join(srcDir, "..");
@@ -475,6 +477,16 @@ function mapJobSpyRows(
 
     const jobUrlDirect = toStringOrNull(row.job_url_direct);
 
+    // Canonicalize contract + work mode at the write boundary so the row never
+    // stores raw scraper noise; unrecognized values become undefined and surface
+    // as an explicit gap rather than a value that renders blank.
+    const isRemote = toBooleanOrNull(row.is_remote);
+    const jobType =
+      normalizeContractType(toStringOrNull(row.job_type)) ?? undefined;
+    const workFromHomeType =
+      resolveWorkMode(toStringOrNull(row.work_from_home_type), isRemote) ??
+      undefined;
+
     jobs.push({
       source,
       sourceJobId: toStringOrNull(row.id) ?? undefined,
@@ -491,13 +503,13 @@ function mapJobSpyRows(
       ),
       jobDescription: toStringOrNull(row.description) ?? undefined,
       salary: salary ?? undefined,
-      jobType: toStringOrNull(row.job_type) ?? undefined,
+      jobType,
       salarySource: toStringOrNull(row.salary_source) ?? undefined,
       salaryInterval: interval ?? undefined,
       salaryMinAmount: minAmount ?? undefined,
       salaryMaxAmount: maxAmount ?? undefined,
       salaryCurrency: currency ?? undefined,
-      isRemote: toBooleanOrNull(row.is_remote) ?? undefined,
+      isRemote: isRemote ?? undefined,
       jobLevel: toStringOrNull(row.job_level) ?? undefined,
       jobFunction: toStringOrNull(row.job_function) ?? undefined,
       listingType: toStringOrNull(row.listing_type) ?? undefined,
@@ -516,7 +528,7 @@ function mapJobSpyRows(
       companyReviewsCount:
         toNumberOrNull(row.company_reviews_count) ?? undefined,
       vacancyCount: toNumberOrNull(row.vacancy_count) ?? undefined,
-      workFromHomeType: toStringOrNull(row.work_from_home_type) ?? undefined,
+      workFromHomeType,
     });
   }
 

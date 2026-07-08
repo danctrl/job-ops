@@ -23,6 +23,8 @@
     "docs:version": "npm --workspace docs-site run docs:version",
     "typst-theme:generate": "node ./scripts/generate-typst-themes.mjs",
     "typst-theme:validate": "node ./scripts/generate-typst-themes.mjs --check && npm --workspace orchestrator run test:run -- src/server/services/resume-renderer/typst.test.ts",
+    "cover-letter-theme:generate": "node ./scripts/generate-cover-letter-themes.mjs",
+    "cover-letter-theme:validate": "node ./scripts/generate-cover-letter-themes.mjs --check",
     "release:set-version": "node ./scripts/set-orchestrator-version.mjs",
     "knip": "knip"
   },

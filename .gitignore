@@ -31,3 +31,7 @@ tmp/
 
 # Runtime storage artifacts
 orchestrator/storage
+
+# Local cover-letter reference material (not part of the repo)
+JOBOPS-COVER-LETTER-IMPLEMENTATION.md
+magic-cv/
