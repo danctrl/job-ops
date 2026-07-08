@@ -7,6 +7,11 @@ import { Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { cn, formatDate, formatJobSourceLabel, sourceLabel } from "@/lib/utils";
 import { useSettings } from "../hooks/useSettings";
+import {
+  formatContractType,
+  formatLevel,
+  formatWorkmode,
+} from "../lib/job-format";
 import { formatPostingAgeLabel } from "../lib/job-posting-age";
 import { appliedDuplicateIndicator } from "../pages/orchestrator/constants";
 import {
@@ -168,7 +173,7 @@ export const JobHeader: React.FC<JobHeaderProps> = ({
 }) => {
   const jobStatus = getJobStatusIndicator(job.status);
   const tracerStatus = getTracerStatusIndicator(job.tracerLinksEnabled);
-  const { showSponsorInfo } = useSettings();
+  const { showSponsorInfo, showCoverageScore } = useSettings();
   const location = useLocation();
   const { pathname } = location;
   const isJobPage = pathname.startsWith("/job/");
@@ -179,7 +184,7 @@ export const JobHeader: React.FC<JobHeaderProps> = ({
   const postingAge = formatPostingAgeLabel(job.datePosted);
   const jobStatusTooltip =
     job.status === "discovered" ? (
-      <p className="text-xs">Found by the pipeline. Not tailored yet.</p>
+      <p className="text-xs">Saved. Not tailored yet.</p>
     ) : job.status === "ready" ? (
       <p className="text-xs">Tailored and ready to apply.</p>
     ) : undefined;
@@ -210,11 +215,10 @@ export const JobHeader: React.FC<JobHeaderProps> = ({
           <span>{job.employer}</span>
 
           <div className="flex flex-wrap items-center gap-x-3 text-sm text-muted-foreground/70 mt-1">
-            {(job.location || job.isRemote) && (
+            {job.location && (
               <span className="flex items-center gap-1">
                 <MapPin className="size-4" />
-                {job.location?.trim()}
-                {job.isRemote && ", Remote"}
+                {job.location.trim()}
               </span>
             )}
             {deadline && (
@@ -264,6 +268,16 @@ export const JobHeader: React.FC<JobHeaderProps> = ({
             className={tracerStatusTooltip ? "cursor-help" : undefined}
           />
 
+          {showCoverageScore && job.coverageScore != null && (
+            <StatusIndicator
+              variant="sky"
+              label={`ATS ${job.coverageScore}%`}
+              tooltip="Share of this job's must-have keywords covered by the tailored CV."
+              tooltipClassName="max-w-xs"
+              className="cursor-help"
+            />
+          )}
+
           <AppliedDuplicatePill match={job.appliedDuplicateMatch} />
 
           {job.source && (
@@ -286,14 +300,43 @@ export const JobHeader: React.FC<JobHeaderProps> = ({
             />
           )}
 
-          {job.isRemote === true && (
+          {formatLevel(job.jobLevel) && (
             <StatusIndicator
-              variant="emerald"
-              label="Remote"
-              dotColor="bg-emerald-400"
-              tooltip="The job claims to be remote"
+              label={formatLevel(job.jobLevel)}
+              dotColor="bg-indigo-400"
+              tooltip="Seniority level"
             />
           )}
+
+          {(() => {
+            const workmode = formatWorkmode(job);
+            if (!workmode) return null;
+            const variant =
+              workmode === "Remote"
+                ? "emerald"
+                : workmode === "Hybrid"
+                  ? "amber"
+                  : "sky";
+            return (
+              <StatusIndicator
+                variant={variant}
+                label={workmode}
+                tooltip={`${workmode} role`}
+              />
+            );
+          })()}
+
+          {(() => {
+            const contract = formatContractType(job.jobType);
+            if (!contract) return null;
+            return (
+              <StatusIndicator
+                label={contract}
+                dotColor="bg-muted-foreground/60"
+                tooltip="Contract type"
+              />
+            );
+          })()}
 
           {showSponsorInfo && (
             <SponsorPill

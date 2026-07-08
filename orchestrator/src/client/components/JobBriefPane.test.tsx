@@ -19,12 +19,11 @@ describe("JobBriefPane", () => {
       suitabilityReason: "Good fit because the stack matches.",
       jobBrief: JSON.stringify({
         role_summary: "Build internal workflow tools.",
+        skills_and_domain_highlights: ["Node.js", "PostgreSQL"],
+        tools_mentioned: ["Slack"],
         they_want: ["TypeScript", "React"],
-        specifics: ["Node.js", "PostgreSQL"],
         company_offers: ["Mentorship"],
-        practical_details: ["Salary: Not stated"],
         missing_or_unclear: ["Sponsorship not stated"],
-        repeated_signals: ["Collaboration"],
       }),
     });
 
@@ -35,10 +34,29 @@ describe("JobBriefPane", () => {
     expect(screen.getByText("React")).toBeVisible();
     expect(screen.getByText("Node.js")).toBeVisible();
     expect(screen.getByText("PostgreSQL")).toBeVisible();
+    expect(screen.getByText("Slack")).toBeVisible();
     expect(screen.getByText("Mentorship")).toBeVisible();
-    expect(screen.queryByText("Salary: Not stated")).not.toBeInTheDocument();
     expect(screen.getByText("Sponsorship not stated")).toBeVisible();
-    expect(screen.queryByText("Collaboration")).not.toBeInTheDocument();
+  });
+
+  it("falls back to legacy `specifics` for highlights", () => {
+    const job = createJob({
+      jobBrief: JSON.stringify({
+        role_summary: "Legacy brief shape.",
+        they_want: [],
+        specifics: ["Kubernetes", "Terraform"],
+        company_offers: [],
+        practical_details: [],
+        missing_or_unclear: [],
+        repeated_signals: [],
+      }),
+    });
+
+    render(<JobBriefPane job={job} />);
+
+    expect(screen.getByText("Highlights")).toBeVisible();
+    expect(screen.getByText("Kubernetes")).toBeVisible();
+    expect(screen.getByText("Terraform")).toBeVisible();
   });
 
   it("falls back when the brief is missing", () => {
@@ -61,12 +79,11 @@ describe("JobBriefPane", () => {
     const job = createJob({
       jobBrief: JSON.stringify({
         role_summary: "Maintain data pipelines.",
+        skills_and_domain_highlights: [],
+        tools_mentioned: [],
         they_want: [],
-        specifics: [],
         company_offers: [],
-        practical_details: ["Location: London"],
         missing_or_unclear: [],
-        repeated_signals: [],
       }),
     });
 
@@ -75,7 +92,6 @@ describe("JobBriefPane", () => {
     expect(screen.getByText("Maintain data pipelines.")).toBeVisible();
     expect(screen.queryByText("They want")).not.toBeInTheDocument();
     expect(screen.queryByText("Highlights")).not.toBeInTheDocument();
-    expect(screen.queryByText("Practical details")).not.toBeInTheDocument();
-    expect(screen.queryByText("Location: London")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tools")).not.toBeInTheDocument();
   });
 });

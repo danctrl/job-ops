@@ -1,7 +1,9 @@
+import { KbdHint } from "@client/components/KbdHint";
 import { PageHeader, StatusIndicator } from "@client/components/layout";
 import type { JobSource } from "@shared/types.js";
 import {
   FileText,
+  Keyboard,
   Loader2,
   MoreHorizontal,
   Play,
@@ -28,6 +30,7 @@ interface OrchestratorHeaderProps {
   onOpenAutomaticRun: () => void;
   onCancelPipeline: () => void;
   onOpenManualImport: () => void;
+  onOpenShortcuts: () => void;
 }
 
 export const OrchestratorHeader: React.FC<OrchestratorHeaderProps> = ({
@@ -41,6 +44,7 @@ export const OrchestratorHeader: React.FC<OrchestratorHeaderProps> = ({
   onOpenAutomaticRun,
   onCancelPipeline,
   onOpenManualImport,
+  onOpenShortcuts,
 }) => {
   const primaryAction = hideRunAction ? null : isPipelineRunning ? (
     <Button
@@ -80,6 +84,18 @@ export const OrchestratorHeader: React.FC<OrchestratorHeaderProps> = ({
   const actions = (
     <div className="flex items-center gap-2">
       {primaryAction}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={onOpenShortcuts}
+        className="gap-1.5"
+        aria-label="Keyboard shortcuts"
+        title="Keyboard shortcuts"
+      >
+        <Keyboard className="h-4 w-4" />
+        <KbdHint shortcut="?" className="hidden sm:inline-flex" />
+      </Button>
       <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <Button

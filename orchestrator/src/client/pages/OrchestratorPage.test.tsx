@@ -93,6 +93,7 @@ const jobFixture = createJob({
   location: "London",
   jobDescription: "Build APIs",
   status: "ready",
+  resumeFreshness: "current",
 });
 
 const job2 = createJob({
@@ -1500,9 +1501,10 @@ describe("OrchestratorPage", () => {
       }),
     );
 
+    // Tab order is Saved(1) / Ready(2) / Applied(3) / All(4).
     pressKey("2");
     await waitFor(() => {
-      expect(locationText()).toContain("/discovered");
+      expect(locationText()).toContain("/ready");
     });
 
     pressKey("4");
@@ -1543,8 +1545,8 @@ describe("OrchestratorPage", () => {
       );
     });
 
-    // Switch to discovered for move-to-ready shortcut
-    pressKey("2");
+    // Switch to the Saved/Discovered tab (shortcut "1") for move-to-ready.
+    pressKey("1");
     await waitFor(() => {
       expect(screen.getByTestId("location").textContent).toContain(
         "/discovered",

@@ -171,6 +171,10 @@ export function useKeyboardShortcuts(args: UseKeyboardShortcutsArgs): void {
       [SHORTCUTS.markApplied.key]: () => {
         if (!selectedJob) return;
         if (activeTab !== "ready") return;
+        if (selectedJob.resumeFreshness === "missing") {
+          toast.error("Build or upload a resume PDF before marking as applied");
+          return;
+        }
         if (shortcutActionInFlight.current) return;
         shortcutActionInFlight.current = true;
         const jobId = selectedJob.id;

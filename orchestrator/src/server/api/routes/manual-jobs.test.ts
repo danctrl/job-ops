@@ -178,11 +178,15 @@ describe.sequential("Manual jobs API routes", () => {
     expect(res.status).toBe(400);
   });
 
-  it("skips tailoring and scoring when skipTailoring is true", async () => {
+  it("skips tailoring but still scores when skipTailoring is true", async () => {
     const { processJob } = await import("@server/pipeline/index");
     const { scoreJobSuitability } = await import("@server/services/scorer");
     vi.mocked(processJob).mockClear();
     vi.mocked(scoreJobSuitability).mockClear();
+    vi.mocked(scoreJobSuitability).mockResolvedValue({
+      score: 64,
+      reason: "Reasonable fit",
+    });
 
     const res = await fetch(`${baseUrl}/api/manual-jobs/import`, {
       method: "POST",
@@ -200,16 +204,20 @@ describe.sequential("Manual jobs API routes", () => {
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.ok).toBe(true);
+    // Import-without-tailoring lands in Saved (discovered), not Ready.
     expect(body.data.status).toBe("discovered");
+    // Tailoring (summarize + PDF) is deferred; scoring still runs.
     expect(vi.mocked(processJob)).not.toHaveBeenCalled();
 
     await new Promise((resolve) => setTimeout(resolve, 25));
-    expect(vi.mocked(scoreJobSuitability)).not.toHaveBeenCalled();
+    expect(vi.mocked(scoreJobSuitability)).toHaveBeenCalled();
 
     const followupRes = await fetch(`${baseUrl}/api/jobs/${body.data.id}`);
     const followupBody = await followupRes.json();
+    // Stays Saved after scoring; the score/brief are filled in.
     expect(followupBody.data.status).toBe("discovered");
-    expect(followupBody.data.suitabilityScore).toBeNull();
+    expect(followupBody.data.suitabilityScore).toBe(64);
+    // No tailoring ran, so there is no tailored summary/PDF.
     expect(followupBody.data.tailoredSummary ?? null).toBeNull();
   });
 
@@ -233,6 +241,7 @@ describe.sequential("Manual jobs API routes", () => {
     });
     const body = await res.json();
     expect(res.status).toBe(200);
+    // Setting-driven skip lands in Saved (discovered) and scores async.
     expect(body.data.status).toBe("discovered");
     expect(vi.mocked(processJob)).not.toHaveBeenCalled();
   });

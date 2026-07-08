@@ -28,6 +28,19 @@ const COMPANY_SUFFIXES = [
   "trading as",
   "&",
   "the",
+  // German/EU legal forms — the same company appears with and without these
+  // across sources ("Solaris" vs "Solaris SE", "Packmatic" vs "Packmatic
+  // GmbH"), so strip them from the dedup match key.
+  "gmbh",
+  "mbh",
+  "ug",
+  "ag",
+  "se",
+  "kg",
+  "kgaa",
+  "gbr",
+  "ohg",
+  "haftungsbeschränkt",
 ];
 
 function normalizeMatchText(value: string): string {
@@ -129,9 +142,29 @@ export function getJobLocationCandidates(job: {
   return out;
 }
 
+// A hybrid or on-site job needs the candidate to actually be at the office, so
+// only remote roles may match without a city hit. Reads the workplace type
+// from the evidence, the stored field, or the isRemote flag.
+function jobRequiresOffice(job: {
+  workFromHomeType?: string | null;
+  isRemote?: boolean | null;
+  locationEvidence?:
+    | { workplaceType?: "remote" | "hybrid" | "onsite" | null }
+    | unknown;
+}): boolean {
+  const evidence = job.locationEvidence;
+  const fromEvidence =
+    evidence && !Array.isArray(evidence)
+      ? (evidence as { workplaceType?: string | null }).workplaceType
+      : null;
+  const workplace = fromEvidence ?? job.workFromHomeType ?? null;
+  return workplace === "hybrid" || workplace === "onsite";
+}
+
 export function matchJobLocationIntent(
   job: {
     location?: string | null;
+    workFromHomeType?: string | null;
     locationEvidence?: {
       location?: string | null;
       country?: string | null;
@@ -173,8 +206,16 @@ export function matchJobLocationIntent(
       );
     });
 
-    if (cityMatched || intent.matchStrictness === "flexible") {
+    // A hybrid/on-site job must sit in a requested city — the "flexible" bypass
+    // only applies to remote-capable roles that need no commute.
+    if (
+      cityMatched ||
+      (intent.matchStrictness === "flexible" && !jobRequiresOffice(job))
+    ) {
       return { matched: true, reasonCode: "selected_location", priority: 1 };
+    }
+    if (jobRequiresOffice(job)) {
+      return { matched: false, reasonCode: "office_out_of_city", priority: 0 };
     }
   }
 

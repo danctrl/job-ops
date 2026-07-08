@@ -74,6 +74,49 @@ export const OrchestratorJobWorkspaceContainer: React.FC<
     return tabDef.statuses.includes(selectedJob.status) ? selectedJob : null;
   }, [navigation.activeTab, selectedJob]);
 
+  // Follow a selected job when its status changes out of the active tab (e.g.
+  // discovered -> ready after building the resume): switch to the tab that now
+  // holds it so the selection is preserved instead of showing "No job selected".
+  // Only act on a genuine status transition of the same job on the same tab — not
+  // on tab switches or cross-tab selections, which keep their existing behavior.
+  const followStateRef = useRef<{
+    id: string;
+    status: string;
+    tab: string;
+  } | null>(null);
+  useEffect(() => {
+    const activeTab = navigation.activeTab;
+    if (isLoading || !selectedJob) {
+      followStateRef.current = null;
+      return;
+    }
+    const prev = followStateRef.current;
+    followStateRef.current = {
+      id: selectedJob.id,
+      status: selectedJob.status,
+      tab: activeTab,
+    };
+    if (
+      !prev ||
+      prev.id !== selectedJob.id ||
+      prev.tab !== activeTab ||
+      prev.status === selectedJob.status
+    ) {
+      return;
+    }
+    const tabDef = tabs.find((tab) => tab.id === activeTab);
+    if (!tabDef || tabDef.statuses.length === 0) return; // "all" fits everything
+    if (tabDef.statuses.includes(selectedJob.status)) return; // still fits
+    const targetTab =
+      tabs.find(
+        (tab) =>
+          tab.statuses.length > 0 && tab.statuses.includes(selectedJob.status),
+      ) ?? tabs.find((tab) => tab.statuses.length === 0);
+    if (targetTab && targetTab.id !== activeTab) {
+      navigation.navigateWithContext(targetTab.id, selectedJob.id, true);
+    }
+  }, [isLoading, selectedJob, navigation]);
+
   const {
     selectedJobIds,
     canSkipSelected,

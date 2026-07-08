@@ -25,6 +25,8 @@ vi.mock("@server/services/scorer", () => ({
 
 vi.mock("@server/services/job-brief", () => ({
   generateJobBrief: vi.fn(),
+  extractJobPosting: vi.fn(),
+  mergeStructuredIntoJob: vi.fn(() => ({})),
 }));
 
 vi.mock("@server/services/visa-sponsors/index", () => ({
@@ -65,7 +67,7 @@ describe("scoreJobsStep auto-skip behavior", () => {
       score: 40,
       reason: "Low fit",
     });
-    vi.mocked(jobBrief.generateJobBrief).mockResolvedValue(null);
+    vi.mocked(jobBrief.extractJobPosting).mockResolvedValue(null);
     vi.mocked(visaSponsors.searchSponsors).mockResolvedValue([]);
     vi.mocked(visaSponsors.calculateSponsorMatchSummary).mockReturnValue({
       sponsorMatchScore: 0,
@@ -129,9 +131,18 @@ describe("scoreJobsStep auto-skip behavior", () => {
     const jobsRepo = await import("@server/repositories/jobs");
     const jobBrief = await import("@server/services/job-brief");
 
-    vi.mocked(jobBrief.generateJobBrief).mockResolvedValue(
-      '{"role_summary":"Build tools","they_want":[],"specifics":[],"company_offers":[],"practical_details":[],"missing_or_unclear":[],"repeated_signals":[]}',
-    );
+    vi.mocked(jobBrief.extractJobPosting).mockResolvedValue({
+      jobBrief:
+        '{"role_summary":"Build tools","skills_and_domain_highlights":[],"tools_mentioned":[],"they_want":[],"company_offers":[],"missing_or_unclear":[]}',
+      structured: {
+        company_name: null,
+        location: null,
+        work_mode: null,
+        contract_type: null,
+        seniority_level: null,
+        salary_range: null,
+      },
+    });
 
     await scoreJobsStep({ profile: {} });
 
@@ -139,7 +150,7 @@ describe("scoreJobsStep auto-skip behavior", () => {
       "job-1",
       expect.objectContaining({
         jobBrief:
-          '{"role_summary":"Build tools","they_want":[],"specifics":[],"company_offers":[],"practical_details":[],"missing_or_unclear":[],"repeated_signals":[]}',
+          '{"role_summary":"Build tools","skills_and_domain_highlights":[],"tools_mentioned":[],"they_want":[],"company_offers":[],"missing_or_unclear":[]}',
       }),
     );
   });
@@ -288,5 +299,49 @@ describe("scoreJobsStep auto-skip behavior", () => {
     expect(result.scoredJobs).toHaveLength(0);
     expect(vi.mocked(scorer.scoreJobSuitability)).not.toHaveBeenCalled();
     expect(vi.mocked(jobsRepo.updateJob)).not.toHaveBeenCalled();
+  });
+
+  it("caps the number of jobs fetched for scoring at maxJobsToScore", async () => {
+    const jobsRepo = await import("@server/repositories/jobs");
+
+    await scoreJobsStep({ profile: {}, maxJobsToScore: 3 });
+
+    expect(jobsRepo.getUnscoredDiscoveredJobs).toHaveBeenCalledWith(3);
+  });
+
+  it("skips a failing job without aborting the run", async () => {
+    const jobsRepo = await import("@server/repositories/jobs");
+    const scorer = await import("@server/services/scorer");
+    const { logger } = await import("@infra/logger");
+
+    vi.mocked(jobsRepo.getUnscoredDiscoveredJobs).mockResolvedValue([
+      createJob({
+        id: "job-1",
+        title: "Boom",
+        employer: "Acme",
+        suitabilityScore: null,
+      }),
+      createJob({
+        id: "job-2",
+        title: "Fine",
+        employer: "Beta",
+        suitabilityScore: null,
+      }),
+    ]);
+    vi.mocked(scorer.scoreJobSuitability)
+      .mockRejectedValueOnce(new Error("LLM exploded"))
+      .mockResolvedValueOnce({ score: 70, reason: "ok" });
+
+    const result = await scoreJobsStep({ profile: {} });
+
+    // The failing job is skipped; the healthy one still scores, and the run
+    // does not throw (asyncPool would otherwise rethrow the first error).
+    expect(result.scoredJobs).toHaveLength(1);
+    expect(result.scoredJobs[0].id).toBe("job-2");
+    expect(vi.mocked(jobsRepo.updateJob)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "Scoring failed for job; skipping",
+      expect.objectContaining({ jobId: "job-1" }),
+    );
   });
 });

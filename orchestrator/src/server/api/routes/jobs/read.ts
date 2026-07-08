@@ -3,6 +3,10 @@ import { fail, ok } from "@infra/http";
 import { logger } from "@infra/logger";
 import * as jobsRepo from "@server/repositories/jobs";
 import { attachAppliedDuplicateMatches } from "@server/services/applied-duplicate-matching";
+import {
+  applyCoverLettersFreshness,
+  resolveCoverLetterFingerprintContext,
+} from "@server/services/cover-letter-fingerprint";
 import { getPdfPath, pdfExists } from "@server/services/pdf";
 import {
   applyJobsPdfFreshness,
@@ -72,9 +76,12 @@ jobsReadRouter.get("/", async (req: Request, res: Response) => {
             await jobsRepo.getJobListItems(statuses),
             pdfFingerprintContext,
           ).map(toJobListItem)
-        : applyJobsPdfFreshness(
-            await jobsRepo.getAllJobs(statuses),
-            pdfFingerprintContext,
+        : applyCoverLettersFreshness(
+            applyJobsPdfFreshness(
+              await jobsRepo.getAllJobs(statuses),
+              pdfFingerprintContext,
+            ),
+            await resolveCoverLetterFingerprintContext(),
           );
     primaryQueryMs = performance.now() - primaryQueryStart;
     const candidateCount = 0;
@@ -245,3 +252,21 @@ jobsReadRouter.get("/:id/pdf", async (req: Request, res: Response) => {
     }
   });
 });
+
+jobsReadRouter.get(
+  "/:id/cover-letter/pdf",
+  async (req: Request, res: Response) => {
+    const job = await jobsRepo.getJobById(req.params.id);
+    if (!job?.coverLetterPath) {
+      fail(res, notFound("Cover letter not found"));
+      return;
+    }
+
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(job.coverLetterPath, (error) => {
+      if (error) {
+        fail(res, notFound("Cover letter not found"));
+      }
+    });
+  },
+);

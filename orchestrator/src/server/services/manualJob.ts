@@ -4,6 +4,8 @@
 
 import { logger } from "@infra/logger";
 import type { ManualJobDraft } from "@shared/types";
+import { normalizeContractType } from "@shared/utils/contract";
+import { normalizeJobTitle } from "@shared/utils/string";
 import type { JsonSchemaDefinition } from "./llm/types";
 import { createConfiguredLlmService, resolveLlmModel } from "./modelSelection";
 
@@ -37,7 +39,11 @@ const MANUAL_JOB_SCHEMA: JsonSchemaDefinition = {
     type: "object",
     properties: {
       title: { type: "string", description: "Job title" },
-      employer: { type: "string", description: "Company/employer name" },
+      employer: {
+        type: "string",
+        description:
+          "Full legal company name incl. the legal form when present (e.g. 'Avision GmbH')",
+      },
       location: { type: "string", description: "Job location" },
       salary: { type: "string", description: "Salary information" },
       deadline: { type: "string", description: "Application deadline" },
@@ -128,8 +134,8 @@ Return JSON only with the keys listed below. Use empty string if unknown.
 Do not guess or invent data. Ignore navigation, headers, footers, and other non-job content.
 
 Keys:
-- title (job title)
-- employer (company name)
+- title (pure job title only — exclude gender markers like "(m/w/d)", contract-type or work-mode suffixes like "in Festanstellung" / "Vollzeit" / "Remote", and any req/ID codes)
+- employer (full legal company name exactly as written in the posting, INCLUDING the legal form when present — e.g. "Avision GmbH", "Zertificon Solutions GmbH", "Solaris SE". Do not drop or add a legal form.)
 - location (job location)
 - salary (salary/compensation info)
 - deadline (application deadline)
@@ -170,7 +176,11 @@ function normalizeDraft(parsed: ManualJobApiResponse): ManualJobDraft {
   const out: ManualJobDraft = {};
 
   // Map each field, only including non-empty strings
-  if (parsed.title?.trim()) out.title = parsed.title.trim();
+  if (parsed.title?.trim()) {
+    // Shared normalizer strips gender/location/work-mode/contract noise; it
+    // already falls back to the trimmed original if nothing meaningful remains.
+    out.title = normalizeJobTitle(parsed.title);
+  }
   if (parsed.employer?.trim()) out.employer = parsed.employer.trim();
   if (parsed.location?.trim()) out.location = parsed.location.trim();
   if (parsed.salary?.trim()) out.salary = parsed.salary.trim();
@@ -178,7 +188,11 @@ function normalizeDraft(parsed: ManualJobApiResponse): ManualJobDraft {
   if (parsed.jobUrl?.trim()) out.jobUrl = parsed.jobUrl.trim();
   if (parsed.applicationLink?.trim())
     out.applicationLink = parsed.applicationLink.trim();
-  if (parsed.jobType?.trim()) out.jobType = parsed.jobType.trim();
+  if (parsed.jobType?.trim()) {
+    // Canonicalize to the shared vocabulary; drop unrecognized noise so it
+    // surfaces as a gap instead of a value the UI can't render consistently.
+    out.jobType = normalizeContractType(parsed.jobType) ?? undefined;
+  }
   if (parsed.jobLevel?.trim()) out.jobLevel = parsed.jobLevel.trim();
   if (parsed.jobFunction?.trim()) out.jobFunction = parsed.jobFunction.trim();
   if (parsed.disciplines?.trim()) out.disciplines = parsed.disciplines.trim();

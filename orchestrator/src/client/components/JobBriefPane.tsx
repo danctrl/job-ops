@@ -1,4 +1,5 @@
 import type { Job, JobBrief } from "@shared/types.js";
+import { computeStructuralGaps } from "@shared/utils/job-gaps.js";
 import { motion, useReducedMotion } from "framer-motion";
 import { Sparkles } from "lucide-react";
 import type React from "react";
@@ -24,14 +25,22 @@ export const JobBriefPane: React.FC<JobBriefPaneProps> = ({
   const brief = parseJobBrief(job.jobBrief);
   const prefersReducedMotion = useReducedMotion();
 
+  // Structural gaps are derived from the canonical job row — the SAME fields the
+  // UI displays — so the "Missing or unclear" list can never disagree with a
+  // shown value, and it renders even before a brief exists.
+  const structuralGaps = useMemo(() => computeStructuralGaps(job), [job]);
+
   const bulletSections = useMemo(() => {
     if (!brief) return [];
     return [
       { title: "Company offers", items: brief.company_offers },
       { title: "They want", items: brief.they_want },
-      { title: "Missing or unclear", items: brief.missing_or_unclear },
+      {
+        title: "Missing or unclear",
+        items: [...structuralGaps, ...brief.missing_or_unclear],
+      },
     ];
-  }, [brief]);
+  }, [brief, structuralGaps]);
 
   const bulletSectionsWithOffset = useMemo(() => {
     let offset = 0;
@@ -51,6 +60,18 @@ export const JobBriefPane: React.FC<JobBriefPaneProps> = ({
         )}
       >
         <FitLine job={job} />
+        {structuralGaps.length > 0 && (
+          <div className="mt-3">
+            <BulletSection
+              jobId={job.id}
+              title="Missing or unclear"
+              items={structuralGaps}
+              startIndex={0}
+              fadeOnly={false}
+              prefersReducedMotion={prefersReducedMotion}
+            />
+          </div>
+        )}
         <p className="mt-2 text-xs text-muted-foreground">
           Recalculate match to generate a concise JD brief.
         </p>
@@ -70,10 +91,21 @@ export const JobBriefPane: React.FC<JobBriefPaneProps> = ({
         {brief.role_summary}
       </p>
 
-      {brief.specifics.length > 0 && (
+      {brief.skills_and_domain_highlights.length > 0 && (
         <HighlightsSection
           jobId={job.id}
-          items={brief.specifics}
+          title="Highlights"
+          items={brief.skills_and_domain_highlights}
+          prefersReducedMotion={prefersReducedMotion}
+        />
+      )}
+
+      {brief.tools_mentioned.length > 0 && (
+        <HighlightsSection
+          jobId={job.id}
+          title="Tools"
+          items={brief.tools_mentioned}
+          muted
           prefersReducedMotion={prefersReducedMotion}
         />
       )}
@@ -115,18 +147,24 @@ const FitLine: React.FC<{ job: Job }> = ({ job }) => {
 
 const HighlightsSection: React.FC<{
   jobId: string;
+  title: string;
   items: string[];
+  muted?: boolean;
   prefersReducedMotion: boolean | null;
-}> = ({ jobId, items, prefersReducedMotion }) => (
+}> = ({ jobId, title, items, muted = false, prefersReducedMotion }) => (
   <div className="w-full space-y-2">
     <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-      Highlights
+      {title}
     </div>
     <div className="flex flex-wrap gap-1.5">
       {items.map((item, index) => (
         <motion.span
-          key={`${jobId}-highlight-${index}-${item}`}
-          className="inline-flex items-center whitespace-nowrap rounded-lg border border-border/45 bg-background px-2 py-1 text-foreground shadow-sm"
+          key={`${jobId}-${title}-${index}-${item}`}
+          className={
+            muted
+              ? "inline-flex items-center whitespace-nowrap rounded-lg border border-border/35 bg-muted/40 px-2 py-1 text-muted-foreground"
+              : "inline-flex items-center whitespace-nowrap rounded-lg border border-border/45 bg-background px-2 py-1 text-foreground shadow-sm"
+          }
           initial={
             prefersReducedMotion ? false : { opacity: 0, x: HIGHLIGHT_X_OFFSET }
           }
@@ -194,18 +232,23 @@ export function parseJobBrief(value: string | null): JobBrief | null {
   if (!value) return null;
 
   try {
-    const parsed = JSON.parse(value) as Partial<JobBrief>;
+    const parsed = JSON.parse(value) as Partial<JobBrief> & {
+      specifics?: unknown;
+    };
     if (!parsed || typeof parsed !== "object") return null;
     if (typeof parsed.role_summary !== "string") return null;
 
+    const skills = toStringList(parsed.skills_and_domain_highlights);
+    // Backward-compat: legacy briefs stored highlights under `specifics`.
+    const legacySpecifics = toStringList(parsed.specifics);
+
     return {
       role_summary: parsed.role_summary,
+      skills_and_domain_highlights: skills.length ? skills : legacySpecifics,
+      tools_mentioned: toStringList(parsed.tools_mentioned),
       they_want: toStringList(parsed.they_want),
-      specifics: toStringList(parsed.specifics),
       company_offers: toStringList(parsed.company_offers),
-      practical_details: toStringList(parsed.practical_details),
       missing_or_unclear: toStringList(parsed.missing_or_unclear),
-      repeated_signals: toStringList(parsed.repeated_signals),
     };
   } catch {
     return null;

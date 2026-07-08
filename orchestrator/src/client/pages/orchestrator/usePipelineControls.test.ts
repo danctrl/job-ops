@@ -40,6 +40,7 @@ describe("usePipelineControls", () => {
         jobId: "job-1",
         source: "fetched_url",
         sourceHost: "jobs.example.com",
+        skipTailoring: false,
       });
     });
 
@@ -52,5 +53,32 @@ describe("usePipelineControls", () => {
     );
     expect(loadJobs).toHaveBeenCalledOnce();
     expect(navigateWithContext).toHaveBeenCalledWith("ready", "job-1");
+  });
+
+  it("navigates to the Saved tab when tailoring was skipped", async () => {
+    const loadJobs = vi.fn().mockResolvedValue(undefined);
+    const navigateWithContext = vi.fn();
+
+    const { result } = renderHook(() =>
+      usePipelineControls({
+        isPipelineRunning: false,
+        setIsPipelineRunning: vi.fn(),
+        pipelineTerminalEvent: null,
+        pipelineSources: ["linkedin"],
+        loadJobs,
+        navigateWithContext,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.handleManualImported({
+        jobId: "job-2",
+        source: "pasted_description",
+        sourceHost: null,
+        skipTailoring: true,
+      });
+    });
+
+    expect(navigateWithContext).toHaveBeenCalledWith("discovered", "job-2");
   });
 });

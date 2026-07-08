@@ -71,6 +71,8 @@ vi.mock("@server/services/scorer", () => ({
 
 vi.mock("@server/services/job-brief", () => ({
   generateJobBrief: vi.fn().mockResolvedValue(null),
+  extractJobPosting: vi.fn().mockResolvedValue(null),
+  mergeStructuredIntoJob: vi.fn(() => ({})),
 }));
 
 vi.mock("@server/services/profile", () => ({

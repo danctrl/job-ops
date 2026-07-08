@@ -22,7 +22,7 @@ import {
   Users,
 } from "lucide-react";
 import type React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { showErrorToast } from "@/client/lib/error-toast";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,7 @@ export interface ManualImportResult {
   jobId: string;
   source: ManualImportTrackingSource;
   sourceHost: string | null;
+  skipTailoring: boolean;
 }
 
 type ManualJobDraftState = {
@@ -332,6 +333,15 @@ export const ManualImportFlow: React.FC<ManualImportFlowProps> = ({
   const [tailorAfterImport, setTailorAfterImport] = useState<boolean>(
     autoTailorOnManualImport,
   );
+  // useState seeds only on mount — often before the settings query resolves, so
+  // it latches the `?? true` fallback and ignores the saved preference. Re-sync
+  // when the loaded setting changes, unless the user has toggled it in-modal.
+  const tailorToggledByUserRef = useRef(false);
+  useEffect(() => {
+    if (!tailorToggledByUserRef.current) {
+      setTailorAfterImport(autoTailorOnManualImport);
+    }
+  }, [autoTailorOnManualImport]);
 
   useEffect(() => {
     if (active) {
@@ -455,14 +465,15 @@ export const ManualImportFlow: React.FC<ManualImportFlowProps> = ({
         jobDescription: rawDescription,
       });
       const normalized = normalizeDraft(response.job, rawDescription.trim());
-      if (fetchedSourceUrl && !normalized.jobUrl) {
-        normalized.jobUrl = fetchedSourceUrl;
+      const inheritedUrl = fetchedSourceUrl ?? (fetchUrl.trim() || null);
+      if (inheritedUrl && !normalized.jobUrl) {
+        normalized.jobUrl = inheritedUrl;
       }
       setDraft(normalized);
       setWarning(response.warning ?? null);
       setImportSource(fetchedSourceUrl ? "fetched_url" : "pasted_description");
       setImportSourceHost(
-        getSourceHost(fetchedSourceUrl ?? "") ??
+        getSourceHost(inheritedUrl ?? "") ??
           getSourceHost(normalized.jobUrl) ??
           getSourceHost(normalized.applicationLink),
       );
@@ -500,6 +511,7 @@ export const ManualImportFlow: React.FC<ManualImportFlowProps> = ({
           importSourceHost ??
           getSourceHost(payload.jobUrl ?? "") ??
           getSourceHost(payload.applicationLink ?? ""),
+        skipTailoring,
       });
       onClose();
     } catch (err) {
@@ -708,6 +720,7 @@ export const ManualImportFlow: React.FC<ManualImportFlowProps> = ({
                 id="tailor-after-import"
                 checked={tailorAfterImport}
                 onCheckedChange={(checked) => {
+                  tailorToggledByUserRef.current = true;
                   setTailorAfterImport(checked === true);
                 }}
                 disabled={isImporting}
@@ -721,9 +734,9 @@ export const ManualImportFlow: React.FC<ManualImportFlowProps> = ({
                   Tailor automatically after import
                 </label>
                 <p className="text-xs text-muted-foreground">
-                  Off saves LLM tokens — the job lands in Discovered and you can
-                  tailor it later from the job detail view. Default comes from
-                  Settings → Display.
+                  Off defers only the resume &amp; PDF tailoring — the job is
+                  still scored and briefed, and you can tailor it later from the
+                  job detail view. Default comes from Settings → Display.
                 </p>
               </div>
             </div>

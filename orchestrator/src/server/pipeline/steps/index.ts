@@ -1,4 +1,5 @@
 export { discoverJobsStep } from "./discover-jobs";
+export { enrichRoleFamiliesStep } from "./enrich-role-families";
 export { importJobsStep } from "./import-jobs";
 export { loadProfileStep } from "./load-profile";
 export { notifyPipelineWebhookStep } from "./notify-webhook";

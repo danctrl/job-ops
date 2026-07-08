@@ -9,6 +9,10 @@ import type { PdfRenderer } from "./settings";
 
 export interface PipelineConfig {
   topN: number; // Number of top jobs to process
+  // Hard ceiling on how many discovered jobs get LLM-scored per run (cost
+  // control). Scoring ranks candidates, so this must be >= topN; it is clamped
+  // to topN at the call site. Defaults server-side (env PIPELINE_MAX_SCORE).
+  maxJobsToScore?: number;
   minSuitabilityScore: number; // Minimum score to auto-process
   sources: ExtractorSourceId[]; // Job sources to crawl
   outputDir: string; // Directory for generated PDFs

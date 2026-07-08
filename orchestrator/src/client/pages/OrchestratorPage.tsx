@@ -113,6 +113,7 @@ export const OrchestratorPage: React.FC = () => {
         onOpenAutomaticRun={handleToggleAutomaticRun}
         onCancelPipeline={handleCancelPipeline}
         onOpenManualImport={() => setIsManualImportOpen(true)}
+        onOpenShortcuts={() => ui.onHelpDialogOpenChange(true)}
       />
 
       <main

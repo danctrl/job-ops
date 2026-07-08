@@ -137,6 +137,24 @@ const pipelineRunsHasConfigSnapshot = tableHasColumn(
 const pipelineRunsHasTenantId = tableHasColumn("pipeline_runs", "tenant_id");
 const jobsHasPdfRegenerating = tableHasColumn("jobs", "pdf_regenerating");
 const jobsHasJobBrief = tableHasColumn("jobs", "job_brief");
+const jobsHasCoverLetterPath = tableHasColumn("jobs", "cover_letter_path");
+const jobsHasCoverLetterSource = tableHasColumn("jobs", "cover_letter_source");
+const jobsHasCoverLetterDetails = tableHasColumn(
+  "jobs",
+  "cover_letter_details",
+);
+const jobsHasCoverLetterFingerprint = tableHasColumn(
+  "jobs",
+  "cover_letter_fingerprint",
+);
+const jobsHasCoverLetterRegenerating = tableHasColumn(
+  "jobs",
+  "cover_letter_regenerating",
+);
+const jobsHasCoverLetterGeneratedAt = tableHasColumn(
+  "jobs",
+  "cover_letter_generated_at",
+);
 const watchlistJobStatesHasUserId = tableHasColumn(
   "watchlist_job_states",
   "user_id",
@@ -268,8 +286,14 @@ const migrations = [
     pdf_path TEXT,
     pdf_source TEXT CHECK(pdf_source IN ('generated', 'uploaded')),
     pdf_regenerating INTEGER NOT NULL DEFAULT 0,
+    cover_letter_regenerating INTEGER NOT NULL DEFAULT 0,
     pdf_fingerprint TEXT,
     pdf_generated_at TEXT,
+    cover_letter_path TEXT,
+    cover_letter_generated_at TEXT,
+    cover_letter_source TEXT,
+    cover_letter_details TEXT,
+    cover_letter_fingerprint TEXT,
     tracer_links_enabled INTEGER NOT NULL DEFAULT 0,
     discovered_at TEXT NOT NULL DEFAULT (datetime('now')),
     processed_at TEXT,
@@ -456,10 +480,13 @@ const migrations = [
     source_resume_id TEXT,
     source_mode TEXT CHECK(source_mode IN ('v4', 'v5')),
     imported_at TEXT,
+    language TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE CASCADE
   )`,
+
+  `ALTER TABLE design_resume_documents ADD COLUMN language TEXT`,
 
   `CREATE TABLE IF NOT EXISTS design_resume_assets (
     id TEXT PRIMARY KEY,
@@ -780,6 +807,12 @@ const migrations = [
   `ALTER TABLE jobs ADD COLUMN pdf_regenerating INTEGER NOT NULL DEFAULT 0`,
   `ALTER TABLE jobs ADD COLUMN pdf_fingerprint TEXT`,
   `ALTER TABLE jobs ADD COLUMN pdf_generated_at TEXT`,
+  `ALTER TABLE jobs ADD COLUMN cover_letter_path TEXT`,
+  `ALTER TABLE jobs ADD COLUMN cover_letter_generated_at TEXT`,
+  `ALTER TABLE jobs ADD COLUMN cover_letter_source TEXT`,
+  `ALTER TABLE jobs ADD COLUMN cover_letter_details TEXT`,
+  `ALTER TABLE jobs ADD COLUMN cover_letter_fingerprint TEXT`,
+  `ALTER TABLE jobs ADD COLUMN cover_letter_regenerating INTEGER NOT NULL DEFAULT 0`,
 
   // Add sponsor match columns for visa sponsor matching feature
   `ALTER TABLE jobs ADD COLUMN sponsor_match_score REAL`,
@@ -910,8 +943,14 @@ const migrations = [
     pdf_path TEXT,
     pdf_source TEXT CHECK(pdf_source IN ('generated', 'uploaded')),
     pdf_regenerating INTEGER NOT NULL DEFAULT 0,
+    cover_letter_regenerating INTEGER NOT NULL DEFAULT 0,
     pdf_fingerprint TEXT,
     pdf_generated_at TEXT,
+    cover_letter_path TEXT,
+    cover_letter_generated_at TEXT,
+    cover_letter_source TEXT,
+    cover_letter_details TEXT,
+    cover_letter_fingerprint TEXT,
     tracer_links_enabled INTEGER NOT NULL DEFAULT 0,
     sponsor_match_score REAL,
     sponsor_match_names TEXT,
@@ -931,7 +970,7 @@ const migrations = [
     vacancy_count, work_from_home_type, title, employer, employer_url, job_url, application_link, disciplines,
     deadline, salary, location, location_evidence, degree_required, starting, job_description, status, outcome, closed_at,
     suitability_score, suitability_reason, job_brief, tailored_summary, tailored_headline, tailored_skills,
-    selected_project_ids, pdf_path, pdf_source, pdf_regenerating, pdf_fingerprint, pdf_generated_at, tracer_links_enabled, sponsor_match_score, sponsor_match_names, discovered_at, processed_at,
+    selected_project_ids, pdf_path, pdf_source, pdf_regenerating, pdf_fingerprint, pdf_generated_at, cover_letter_path, cover_letter_generated_at, cover_letter_source, cover_letter_details, cover_letter_fingerprint, cover_letter_regenerating, tracer_links_enabled, sponsor_match_score, sponsor_match_names, discovered_at, processed_at,
     ready_at,
     applied_at, created_at, updated_at
   )
@@ -943,7 +982,7 @@ const migrations = [
     vacancy_count, work_from_home_type, title, employer, employer_url, job_url, application_link, disciplines,
     deadline, salary, location, location_evidence, degree_required, starting, job_description, status, outcome, closed_at,
     suitability_score, suitability_reason, ${jobsHasJobBrief ? "job_brief" : "NULL"}, tailored_summary, tailored_headline, tailored_skills,
-    selected_project_ids, pdf_path, pdf_source, ${jobsHasPdfRegenerating ? "pdf_regenerating" : "0"}, pdf_fingerprint, pdf_generated_at, tracer_links_enabled, sponsor_match_score, sponsor_match_names, discovered_at, processed_at,
+    selected_project_ids, pdf_path, pdf_source, ${jobsHasPdfRegenerating ? "pdf_regenerating" : "0"}, pdf_fingerprint, pdf_generated_at, ${jobsHasCoverLetterPath ? "cover_letter_path" : "NULL"}, ${jobsHasCoverLetterGeneratedAt ? "cover_letter_generated_at" : "NULL"}, ${jobsHasCoverLetterSource ? "cover_letter_source" : "NULL"}, ${jobsHasCoverLetterDetails ? "cover_letter_details" : "NULL"}, ${jobsHasCoverLetterFingerprint ? "cover_letter_fingerprint" : "NULL"}, ${jobsHasCoverLetterRegenerating ? "cover_letter_regenerating" : "0"}, tracer_links_enabled, sponsor_match_score, sponsor_match_names, discovered_at, processed_at,
     ready_at,
     applied_at, created_at, updated_at
   FROM jobs`,
@@ -1180,6 +1219,10 @@ const migrations = [
        ORDER BY se.occurred_at DESC, se.id DESC
        LIMIT 1
      ), 'applied') = 'closed'`,
+  `ALTER TABLE jobs ADD COLUMN role_family TEXT`,
+  // Added after the jobs table rebuild above so the columns are not dropped.
+  `ALTER TABLE jobs ADD COLUMN tailored_experience TEXT`,
+  `ALTER TABLE jobs ADD COLUMN coverage_score INTEGER`,
 ];
 
 console.log("🔧 Running database migrations...");
@@ -1213,7 +1256,10 @@ for (const migration of migrations) {
           .includes("alter table job_chat_threads add column") ||
         migration
           .toLowerCase()
-          .includes("alter table analytics_install_state add column")) &&
+          .includes("alter table analytics_install_state add column") ||
+        migration
+          .toLowerCase()
+          .includes("alter table design_resume_documents add column")) &&
       message.toLowerCase().includes("duplicate column name");
 
     if (isDuplicateColumn) {

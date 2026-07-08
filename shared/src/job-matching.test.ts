@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { deduplicateJobsByTitleAndEmployer } from "./job-matching";
+import { createLocationIntentFromLegacyInputs } from "./location-domain";
+import {
+  deduplicateJobsByTitleAndEmployer,
+  matchJobLocationIntent,
+  normalizeCompanyName,
+} from "./job-matching";
 
 function makeJob(
   overrides: Partial<{
@@ -21,6 +26,74 @@ function makeJob(
     ...overrides,
   };
 }
+
+describe("matchJobLocationIntent — hybrid needs a commutable office", () => {
+  const intent = createLocationIntentFromLegacyInputs({
+    selectedCountry: "Germany",
+    cityLocations: ["Berlin"],
+    workplaceTypes: ["remote", "hybrid", "onsite"],
+    matchStrictness: "flexible",
+  });
+
+  const makeLocationJob = (
+    city: string,
+    workplace: "remote" | "hybrid" | "onsite",
+  ) => ({
+    location: `${city}, Germany`,
+    workFromHomeType: workplace,
+    isRemote: workplace === "remote",
+    locationEvidence: {
+      location: `${city}, Germany`,
+      country: "Germany",
+      city,
+      workplaceType: workplace,
+    },
+  });
+
+  it("drops a hybrid role whose office is in another city", () => {
+    const result = matchJobLocationIntent(
+      makeLocationJob("Munich", "hybrid"),
+      intent,
+    );
+    expect(result.matched).toBe(false);
+    expect(result.reasonCode).toBe("office_out_of_city");
+  });
+
+  it("keeps a hybrid role in a requested city", () => {
+    expect(
+      matchJobLocationIntent(makeLocationJob("Berlin", "hybrid"), intent)
+        .matched,
+    ).toBe(true);
+  });
+
+  it("keeps a remote role in another city via flexible matching", () => {
+    expect(
+      matchJobLocationIntent(makeLocationJob("Munich", "remote"), intent)
+        .matched,
+    ).toBe(true);
+  });
+
+  it("drops an on-site role in another city too", () => {
+    expect(
+      matchJobLocationIntent(makeLocationJob("Hamburg", "onsite"), intent)
+        .matched,
+    ).toBe(false);
+  });
+});
+
+describe("normalizeCompanyName", () => {
+  it("collapses German/EU legal forms so the same company matches", () => {
+    expect(normalizeCompanyName("Solaris SE")).toBe(
+      normalizeCompanyName("Solaris"),
+    );
+    expect(normalizeCompanyName("Packmatic GmbH")).toBe(
+      normalizeCompanyName("Packmatic"),
+    );
+    expect(normalizeCompanyName("MOA Berlin Betriebs GmbH & Co. KG")).toBe(
+      normalizeCompanyName("MOA Berlin Betriebs"),
+    );
+  });
+});
 
 describe("deduplicateJobsByTitleAndEmployer", () => {
   it("returns an empty list unchanged", () => {

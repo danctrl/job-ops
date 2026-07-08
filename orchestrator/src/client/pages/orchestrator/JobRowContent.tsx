@@ -33,8 +33,11 @@ export const JobRowContent = ({
   const isAwaitingAi = isAwaitingAiScore(job);
   const statusToken = statusTokens[job.status] ?? defaultStatusToken;
   const suitabilityTone = getSuitabilityScoreTone(job.suitabilityScore ?? 0);
-  const showStalePdf = isPdfStale(job);
-  const showRegeneratingPdf = isPdfRegenerating(job);
+  // Once applied/in-progress the job is locked; PDF freshness is irrelevant, so
+  // suppress the "Out of date"/"Updating…" chips in those states.
+  const isLocked = job.status === "applied" || job.status === "in_progress";
+  const showStalePdf = isPdfStale(job) && !isLocked;
+  const showRegeneratingPdf = isPdfRegenerating(job) && !isLocked;
 
   return (
     <div className={cn("flex min-w-0 flex-1 items-center gap-3", className)}>
@@ -74,12 +77,12 @@ export const JobRowContent = ({
             {showRegeneratingPdf && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-sm border border-blue-200/70 bg-blue-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-blue-700 dark:border-blue-400/25 dark:bg-blue-400/10 dark:text-blue-200">
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                Generating PDF
+                Updating…
               </span>
             )}
             {showStalePdf && (
               <span className="inline-flex shrink-0 rounded-sm border border-amber-200/70 bg-amber-50 px-1.5 py-0.5 text-[10px] font-medium leading-none text-amber-700 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-200">
-                Regenerate PDF
+                Out of date
               </span>
             )}
           </div>

@@ -200,7 +200,7 @@ describe.sequential("Demo mode API behavior", () => {
       expect(body.meta?.simulated).toBe(true);
       expect(body.data.status).toBe("ready");
       expect(body.data.pdfSource).toBe("generated");
-      expect(body.data.pdfFreshness).toBe("current");
+      expect(body.data.resumeFreshness).toBe("current");
       expect(body.data.pdfPath).toContain(`resume_${jobId}.pdf`);
 
       const pdfResponse = await fetch(`${baseUrl}/api/jobs/${jobId}/pdf`);

@@ -18,21 +18,32 @@ import {
 import { useProfile } from "@client/hooks/useProfile";
 import { useRescoreJob } from "@client/hooks/useRescoreJob";
 import { useSettings } from "@client/hooks/useSettings";
+import { fileToUploadPayload } from "@client/lib/file-upload-payload";
+import { uploadJobDocumentFromFile } from "@client/lib/job-document-upload";
 import { uploadJobPdfFromFile } from "@client/lib/job-pdf-upload";
-import { resolveFilenameLanguage } from "@client/lib/pdf-filename";
 import {
-  getPdfActionLabels,
+  buildPdfFilenames,
+  resolveFilenameLanguage,
+} from "@client/lib/pdf-filename";
+import {
   isPdfRegenerating,
   isPdfStale,
   PDF_REGENERATING_MESSAGE,
   STALE_PDF_MESSAGE,
 } from "@client/lib/pdf-freshness";
-import { downloadJobPdf, openJobPdf } from "@client/lib/private-pdf";
+import {
+  downloadJobCoverLetter,
+  downloadJobPdf,
+  openJobCoverLetter,
+  openJobPdf,
+} from "@client/lib/private-pdf";
+import { queryKeys } from "@client/lib/queryKeys";
 import type {
   Job,
   JobListItem,
   ResumeProjectCatalogItem,
 } from "@shared/types.js";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowRight,
@@ -42,38 +53,48 @@ import {
   Download,
   Edit2,
   ExternalLink,
+  FileSignature,
   FileText,
   FolderKanban,
   Link2,
   Loader2,
   MoreHorizontal,
+  Paperclip,
   RefreshCcw,
-  Sparkles,
   Star,
   Upload,
   XCircle,
 } from "lucide-react";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { parseJobBrief } from "@/client/components/JobBriefPane";
 import { showErrorToast } from "@/client/lib/error-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { trackProductEvent } from "@/lib/analytics";
-import {
-  cn,
-  copyTextToClipboard,
-  formatJobForWebhook,
-  safeFilenamePart,
-} from "@/lib/utils";
+import { cn, copyTextToClipboard, formatJobForWebhook } from "@/lib/utils";
 import type { FilterTab } from "./constants";
 
 interface JobDetailPanelProps {
@@ -176,14 +197,18 @@ const getPrimaryAction = (job: Job): string => {
   return "Review Job";
 };
 
-const getDefaultInspectorTab = (
-  job: Job | null,
-  activeTab: FilterTab,
-): InspectorTab => {
-  if (!job) return "brief";
-  if (activeTab === "ready" || job.status === "ready") return "apply";
+// A freshly selected job opens on Brief so the user reads the role first —
+// except a ready job, which is done building and opens on Apply so the
+// application kit is front and center.
+const getDefaultInspectorTab = (job: Job | null): InspectorTab => {
+  if (job?.status === "ready") return "apply";
   return "brief";
 };
+
+const parseInspectorTab = (value: string | null): InspectorTab | null =>
+  value === "brief" || value === "tailoring" || value === "apply"
+    ? value
+    : null;
 
 const Stat: React.FC<{
   label: string;
@@ -215,23 +240,34 @@ const KitStatus: React.FC<{
   ready: boolean;
   readyLabel?: string;
   optional?: boolean;
-}> = ({ icon, label, ready, readyLabel = "Ready", optional = false }) => (
+  action?: React.ReactNode;
+}> = ({
+  icon,
+  label,
+  ready,
+  readyLabel = "Ready",
+  optional = false,
+  action,
+}) => (
   <div className="flex min-h-11 items-center justify-between gap-3 border-b border-border/30 px-3 py-2.5 last:border-b-0">
     <span className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
       <span className="text-muted-foreground/85">{icon}</span>
       <span className="truncate">{label}</span>
     </span>
-    <span
-      className={cn(
-        "shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide",
-        ready
-          ? "bg-emerald-500/10 text-emerald-300"
-          : optional
-            ? "bg-sky-500/10 text-sky-300"
-            : "bg-amber-500/10 text-amber-300",
-      )}
-    >
-      {ready ? readyLabel : optional ? "Optional" : "Missing"}
+    <span className="flex shrink-0 items-center gap-2">
+      {action}
+      <span
+        className={cn(
+          "shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide",
+          ready
+            ? "bg-emerald-500/10 text-emerald-300"
+            : optional
+              ? "bg-sky-500/10 text-sky-300"
+              : "bg-amber-500/10 text-amber-300",
+        )}
+      >
+        {ready ? readyLabel : optional ? "Optional" : "Missing"}
+      </span>
     </span>
   </div>
 );
@@ -244,18 +280,60 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
   onJobUpdated,
   onPauseRefreshChange,
 }) => {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [inspectorTab, setInspectorTab] = useState<InspectorTab>("brief");
+  // Restore the inspector tab once when returning from the Job Page (it carries
+  // the tab back via ?inspector=…), so the navigation circle closes.
+  const initialInspectorFromUrlRef = useRef<InspectorTab | null>(
+    parseInspectorTab(new URLSearchParams(location.search).get("inspector")),
+  );
   const [isProcessing, setIsProcessing] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const [applyPrompt, setApplyPrompt] = useState<
+    "final-check-no-cover" | "confirm-apply" | null
+  >(null);
+  // Drives the Mark Applied button animation: spinning ring while the request
+  // is in flight, then a checkmark that lingers briefly before the job moves.
+  const [applyPhase, setApplyPhase] = useState<"idle" | "loading" | "success">(
+    "idle",
+  );
+  // Local lock for the Tailoring "Build PDF" CTA so it rings + disables the
+  // instant it's clicked, not only once the server flips pdfRegenerating.
+  const [isBuildingPdf, setIsBuildingPdf] = useState(false);
+  const [focusCoverLetter, setFocusCoverLetter] = useState(false);
   const [isMoving, setIsMoving] = useState(false);
   const [isEditDetailsOpen, setIsEditDetailsOpen] = useState(false);
   const [catalog, setCatalog] = useState<ResumeProjectCatalogItem[]>([]);
   const [isUploadingPdf, setIsUploadingPdf] = useState(false);
+  const [isGeneratingCoverLetter, setIsGeneratingCoverLetter] = useState(false);
+  const [isUploadingCoverLetter, setIsUploadingCoverLetter] = useState(false);
+  const [isUploadingDocument, setIsUploadingDocument] = useState(false);
   const [openedListingJobIds, setOpenedListingJobIds] = useState<Set<string>>(
     () => new Set(),
   );
+  // Resume Build PDF action, lifted from TailoringWorkspace so the inspector CTA
+  // can trigger it when the draft is ready but the PDF isn't built yet.
+  const buildPdfRef = useRef<(() => Promise<void>) | null>(null);
+  const coverLetterBuildRef = useRef<(() => Promise<void>) | null>(null);
+  // Stable registrars so the child's registration effect doesn't re-run each render.
+  const registerBuildPdf = useCallback(
+    (build: (() => Promise<void>) | null) => {
+      buildPdfRef.current = build;
+    },
+    [],
+  );
+  const registerCoverLetterBuild = useCallback(
+    (build: (() => Promise<void>) | null) => {
+      coverLetterBuildRef.current = build;
+    },
+    [],
+  );
   const uploadPdfInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadCoverLetterInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const previousSelectionKeyRef = useRef<string | null>(null);
+  const queryClient = useQueryClient();
   const markAsAppliedMutation = useMarkAsAppliedMutation();
   const skipJobMutation = useSkipJobMutation();
   const { isRescoring, rescoreJob } = useRescoreJob(onJobUpdated);
@@ -266,13 +344,15 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
   const jobLink = selectedJob
     ? selectedJob.applicationLink || selectedJob.jobUrl
     : "#";
-  const selectedPdfFilename = selectedJob
-    ? `${safeFilenamePart(personName || "Unknown", {
-        language: filenameLanguage,
-      })}_${safeFilenamePart(selectedJob.employer || "Unknown", {
-        language: filenameLanguage,
-      })}.pdf`
-    : "resume.pdf";
+  const pdfFilenames = buildPdfFilenames({
+    personName,
+    employer: selectedJob?.employer,
+    language: filenameLanguage,
+  });
+  const selectedPdfFilename = selectedJob ? pdfFilenames.resume : "resume.pdf";
+  const selectedCoverLetterFilename = selectedJob
+    ? pdfFilenames.coverLetter
+    : "cover_letter.pdf";
   const selectedProjectIds = useMemo(
     () => selectedJob?.selectedProjectIds?.split(",").filter(Boolean) ?? [],
     [selectedJob?.selectedProjectIds],
@@ -284,15 +364,50 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
         .filter(Boolean),
     [catalog, selectedProjectIds],
   );
+  const additionalDocumentsQuery = useQuery({
+    queryKey: queryKeys.jobs.documents(selectedJob?.id ?? "none"),
+    queryFn: () => api.getJobDocuments(selectedJob?.id ?? ""),
+    enabled: Boolean(selectedJob),
+  });
+  const additionalDocumentsCount = additionalDocumentsQuery.data?.length ?? 0;
   const hasTailoredSummary = Boolean(selectedJob?.tailoredSummary);
   const hasTailoredSkills = Boolean(selectedJob?.tailoredSkills);
   const hasResumePdf = Boolean(selectedJob?.pdfPath);
+  const hasCoverLetter = Boolean(selectedJob?.coverLetterPath);
+  // Uploaded PDFs are user-supplied and must never be overwritten by a rebuild.
+  const resumeUploaded = selectedJob?.pdfSource === "uploaded";
+  const coverUploaded = selectedJob?.coverLetterSource === "uploaded";
+  const hasUploadedDoc = resumeUploaded || coverUploaded;
   const hasJobListing = Boolean(jobLink && jobLink !== "#");
   const hasOpenedJobListing = selectedJob
     ? openedListingJobIds.has(selectedJob.id)
     : false;
   const applicationKitReady =
-    hasTailoredSummary && hasTailoredSkills && hasResumePdf;
+    hasResumePdf &&
+    (selectedJob?.resumeFreshness === "uploaded" ||
+      (hasTailoredSummary && hasTailoredSkills));
+  // Final check requires everything to be actually built. The resume PDF must be
+  // current/uploaded, and if there's any cover-letter content it must be built
+  // too (current/uploaded) — any hand/AI edit flips freshness so the button
+  // re-greys until both PDFs are rebuilt. With no cover letter at all, the
+  // no-cover prompt still applies.
+  const resumeBuilt =
+    selectedJob?.resumeFreshness === "current" ||
+    selectedJob?.resumeFreshness === "uploaded";
+  const coverLetterBuilt =
+    selectedJob?.coverLetterFreshness === "current" ||
+    selectedJob?.coverLetterFreshness === "uploaded";
+  const hasCoverLetterContent =
+    Boolean(selectedJob?.coverLetterPath) ||
+    Boolean(selectedJob?.coverLetterDetails?.body?.trim());
+  const finalCheckReady =
+    resumeBuilt &&
+    !selectedJob?.pdfRegenerating &&
+    (!hasCoverLetterContent || coverLetterBuilt);
+  // Draft is ready (resume sections generated) even if the PDF isn't built yet —
+  // e.g. an auto-drafted high-rated job. Used to offer "Build PDF" instead of an
+  // alarming "Finish tailoring" warning.
+  const draftReady = hasTailoredSummary && hasTailoredSkills;
   const brief = parseJobBrief(selectedJob?.jobBrief || null);
 
   const loadCatalog = useCallback(async () => {
@@ -308,11 +423,19 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
   }, [loadCatalog]);
 
   useEffect(() => {
-    const currentJobId = selectedJob?.id ?? null;
-    const currentSelectionKey = `${activeTab}:${currentJobId ?? ""}`;
+    // Ignore transient null selections (e.g. while the job detail reloads after
+    // a document upload bumps updatedAt). Only reset the inspector when the
+    // selection genuinely changes to a different job or tab — otherwise a null
+    // round-trip would bounce the user back to Brief.
+    if (!selectedJob) return;
+    const currentSelectionKey = `${activeTab}:${selectedJob.id}`;
     if (previousSelectionKeyRef.current === currentSelectionKey) return;
     previousSelectionKeyRef.current = currentSelectionKey;
-    setInspectorTab(getDefaultInspectorTab(selectedJob, activeTab));
+    // On the first selection after mount, honor an inspector tab carried back
+    // from the Job Page; otherwise fall back to the default (Brief).
+    const restored = initialInspectorFromUrlRef.current;
+    initialInspectorFromUrlRef.current = null;
+    setInspectorTab(restored ?? getDefaultInspectorTab(selectedJob));
     setIsEditDetailsOpen(false);
     onPauseRefreshChange?.(false);
   }, [activeTab, selectedJob, onPauseRefreshChange]);
@@ -388,10 +511,16 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
     }
   }, [handleJobMoved, onJobUpdated, selectedJob]);
 
-  const handleMarkApplied = useCallback(async () => {
-    if (!selectedJob || selectedJob.status !== "ready") return;
+  const confirmMarkApplied = useCallback(async () => {
+    if (
+      !selectedJob ||
+      (selectedJob.status !== "ready" && selectedJob.status !== "discovered")
+    )
+      return;
+    setApplyPrompt(null);
     try {
       setIsApplying(true);
+      setApplyPhase("loading");
       await markAsAppliedMutation.mutateAsync(selectedJob.id);
       trackProductEvent("jobs_job_action_completed", {
         action: "mark_applied",
@@ -399,6 +528,10 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
         from_status: selectedJob.status,
         to_status: "applied",
       });
+      // Hold the checkmark briefly so the success reads as a smooth beat
+      // before the job moves to the Applied column.
+      setApplyPhase("success");
+      await new Promise((resolve) => setTimeout(resolve, 1300));
       toast.success("Marked as applied", {
         description: `${selectedJob.title} at ${selectedJob.employer}`,
       });
@@ -408,8 +541,106 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
       showErrorToast(error, "Failed to mark as applied");
     } finally {
       setIsApplying(false);
+      setApplyPhase("idle");
     }
   }, [handleJobMoved, markAsAppliedMutation, onJobUpdated, selectedJob]);
+
+  // Mark Applied button visuals by phase: spinning ring → animated checkmark.
+  const renderApplyIcon = (sizeClass: string) => {
+    if (applyPhase === "loading") {
+      return (
+        <span
+          className={cn(
+            "inline-block animate-spin rounded-full border-2 border-white/40 border-t-white",
+            sizeClass,
+          )}
+        />
+      );
+    }
+    if (applyPhase === "success") {
+      return (
+        <CheckCircle2
+          className={cn("animate-in zoom-in-50 duration-300", sizeClass)}
+        />
+      );
+    }
+    return <CheckCircle2 className={sizeClass} />;
+  };
+  const applyLabel =
+    applyPhase === "loading"
+      ? "Applying…"
+      : applyPhase === "success"
+        ? "Applied"
+        : "Mark Applied";
+
+  const handleCoverLetterFocusConsumed = useCallback(
+    () => setFocusCoverLetter(false),
+    [],
+  );
+
+  // Build every stale document so one click can unlock the final check: rebuild
+  // the resume if it isn't current/uploaded, and the cover letter if it has
+  // content that isn't current/uploaded. Locks the CTA for the whole duration.
+  const handleBuildPdf = useCallback(async () => {
+    if (isBuildingPdf || !selectedJob) return;
+    const resumeNeedsBuild = !(
+      selectedJob.resumeFreshness === "current" ||
+      selectedJob.resumeFreshness === "uploaded"
+    );
+    const coverHasContent =
+      Boolean(selectedJob.coverLetterPath) ||
+      Boolean(selectedJob.coverLetterDetails?.body?.trim());
+    const coverNeedsBuild =
+      coverHasContent &&
+      !(
+        selectedJob.coverLetterFreshness === "current" ||
+        selectedJob.coverLetterFreshness === "uploaded"
+      );
+    setIsBuildingPdf(true);
+    try {
+      if (resumeNeedsBuild) await buildPdfRef.current?.();
+      if (coverNeedsBuild) await coverLetterBuildRef.current?.();
+    } finally {
+      setIsBuildingPdf(false);
+    }
+  }, [isBuildingPdf, selectedJob]);
+
+  // Open the standalone Job Page, remembering where to return — including the
+  // current inspector tab — so Back lands exactly where the user left.
+  const openJobPage = useCallback(
+    (view?: "timeline" | "documents" | "ghostwriter" | "notes") => {
+      if (!selectedJob) return;
+      const params = new URLSearchParams(location.search);
+      params.set("inspector", inspectorTab);
+      const backTo = `${location.pathname}?${params.toString()}`;
+      const suffix = view ? `/${view}` : "";
+      navigate(`/job/${selectedJob.id}${suffix}`, {
+        state: { jobPageBackTo: backTo },
+      });
+    },
+    [selectedJob, location.pathname, location.search, inspectorTab, navigate],
+  );
+
+  // Final check (tailoring → apply): needs a resume PDF. The cover-letter
+  // question lives here now — if none is generated, ask before moving on.
+  const requestFinalCheck = useCallback(() => {
+    if (!hasResumePdf) return;
+    if (!hasCoverLetter) {
+      setApplyPrompt("final-check-no-cover");
+      return;
+    }
+    setInspectorTab("apply");
+  }, [hasResumePdf, hasCoverLetter]);
+
+  // Mark applied (apply tab): resume PDF required, then a plain confirm. The
+  // cover-letter prompt already happened at the final-check step.
+  const requestMarkApplied = useCallback(() => {
+    if (!selectedJob) return;
+    if (selectedJob.status !== "ready" && selectedJob.status !== "discovered")
+      return;
+    if (!applicationKitReady) return;
+    setApplyPrompt("confirm-apply");
+  }, [selectedJob, applicationKitReady]);
 
   const handlePrimaryAction = useCallback(async () => {
     if (!selectedJob) return;
@@ -418,12 +649,13 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
       return;
     }
     if (selectedJob.status === "ready") {
-      await handleMarkApplied();
+      requestMarkApplied();
       return;
     }
     if (selectedJob.status === "applied") {
       try {
         setIsMoving(true);
+        setApplyPhase("loading");
         await api.updateJob(selectedJob.id, { status: "in_progress" });
         trackProductEvent("jobs_job_action_completed", {
           action: "move_in_progress",
@@ -431,17 +663,21 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
           from_status: selectedJob.status,
           to_status: "in_progress",
         });
+        // Hold the checkmark briefly, mirroring Mark Applied.
+        setApplyPhase("success");
+        await new Promise((resolve) => setTimeout(resolve, 1300));
         toast.success("Moved to in progress");
         await onJobUpdated();
       } catch (error) {
         showErrorToast(error, "Failed to move to in progress");
       } finally {
         setIsMoving(false);
+        setApplyPhase("idle");
       }
       return;
     }
     setInspectorTab("brief");
-  }, [handleMarkApplied, onJobUpdated, selectedJob]);
+  }, [requestMarkApplied, onJobUpdated, selectedJob]);
 
   const handleJobListingOpened = useCallback(() => {
     if (!selectedJob) return;
@@ -478,13 +714,71 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
     });
   }, [selectedJob]);
 
-  const handleDownloadPdf = useCallback(() => {
-    if (!selectedJob || !selectedJob.pdfPath || isPdfRegenerating(selectedJob))
-      return;
-    void downloadJobPdf(selectedJob.id, selectedPdfFilename).catch((error) => {
-      showErrorToast(error, "Could not download PDF");
+  const handleRegenerateCoverLetter = useCallback(async () => {
+    if (!selectedJob) return;
+    const hadCoverLetter = Boolean(selectedJob.coverLetterPath);
+    try {
+      setIsGeneratingCoverLetter(true);
+      await api.generateCoverLetter(selectedJob.id);
+      toast.success(
+        hadCoverLetter ? "Cover letter regenerated" : "Cover letter generated",
+      );
+      await onJobUpdated();
+    } catch (error) {
+      showErrorToast(error, "Failed to generate cover letter");
+    } finally {
+      setIsGeneratingCoverLetter(false);
+    }
+  }, [onJobUpdated, selectedJob]);
+
+  const handleOpenCoverLetter = useCallback(() => {
+    if (!selectedJob || !selectedJob.coverLetterPath) return;
+    void openJobCoverLetter(selectedJob.id).catch((error) => {
+      showErrorToast(error, "Could not open cover letter");
     });
-  }, [selectedJob, selectedPdfFilename]);
+  }, [selectedJob]);
+
+  // On the orchestrator view the resume and cover letter are treated as one set:
+  // rebuild the resume, then the cover letter when one already exists. Uploaded
+  // PDFs block this entirely (handled by the disabled state below).
+  const handleRegenerateDocs = useCallback(async () => {
+    await handleProcess();
+    if (hasCoverLetter && !coverUploaded) {
+      await handleRegenerateCoverLetter();
+    }
+  }, [
+    handleProcess,
+    handleRegenerateCoverLetter,
+    hasCoverLetter,
+    coverUploaded,
+  ]);
+
+  const handleDownloadAll = useCallback(async () => {
+    if (!selectedJob) return;
+    const hasResume =
+      Boolean(selectedJob.pdfPath) && !isPdfRegenerating(selectedJob);
+    const hasCover = Boolean(selectedJob.coverLetterPath);
+    // Trigger downloads sequentially: two anchor clicks in the same tick get
+    // collapsed into one by most browsers, so a single click would only ever
+    // save one of the two files.
+    if (hasResume) {
+      try {
+        await downloadJobPdf(selectedJob.id, selectedPdfFilename);
+      } catch (error) {
+        showErrorToast(error, "Could not download resume PDF");
+      }
+    }
+    if (hasCover) {
+      try {
+        await downloadJobCoverLetter(
+          selectedJob.id,
+          selectedCoverLetterFilename,
+        );
+      } catch (error) {
+        showErrorToast(error, "Could not download cover letter PDF");
+      }
+    }
+  }, [selectedJob, selectedPdfFilename, selectedCoverLetterFilename]);
 
   const handleUploadPdf = useCallback(
     async (file: File) => {
@@ -492,7 +786,7 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
       try {
         setIsUploadingPdf(true);
         await uploadJobPdfFromFile(selectedJob.id, file);
-        toast.success(selectedJob.pdfPath ? "PDF replaced" : "PDF attached");
+        toast.success("Resume uploaded");
         await onJobUpdated();
       } catch (error) {
         showErrorToast(error, "Failed to upload PDF");
@@ -504,6 +798,56 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
       }
     },
     [onJobUpdated, selectedJob],
+  );
+
+  const handleUploadCoverLetter = useCallback(
+    async (file: File) => {
+      if (!selectedJob) return;
+      try {
+        setIsUploadingCoverLetter(true);
+        const payload = await fileToUploadPayload(
+          file,
+          "PDF file could not be encoded for upload.",
+        );
+        await api.uploadCoverLetterPdf(selectedJob.id, {
+          fileName: payload.fileName,
+          mediaType: payload.mediaType ?? undefined,
+          dataBase64: payload.dataBase64,
+        });
+        toast.success("Cover letter uploaded");
+        await onJobUpdated();
+      } catch (error) {
+        showErrorToast(error, "Failed to upload cover letter");
+      } finally {
+        setIsUploadingCoverLetter(false);
+        if (uploadCoverLetterInputRef.current) {
+          uploadCoverLetterInputRef.current.value = "";
+        }
+      }
+    },
+    [onJobUpdated, selectedJob],
+  );
+
+  const handleUploadDocument = useCallback(
+    async (file: File) => {
+      if (!selectedJob) return;
+      try {
+        setIsUploadingDocument(true);
+        await uploadJobDocumentFromFile(selectedJob.id, file);
+        await queryClient.invalidateQueries({
+          queryKey: queryKeys.jobs.documents(selectedJob.id),
+        });
+        toast.success("Document uploaded");
+      } catch (error) {
+        showErrorToast(error, "Failed to upload document");
+      } finally {
+        setIsUploadingDocument(false);
+        if (uploadDocumentInputRef.current) {
+          uploadDocumentInputRef.current.value = "";
+        }
+      }
+    },
+    [queryClient, selectedJob],
   );
 
   if (!selectedJob) {
@@ -529,22 +873,196 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
     isApplying ||
     isMoving ||
     selectedJob.status === "processing";
-  const canGenerate = ["discovered", "ready"].includes(selectedJob.status);
   const canSkip = ["discovered", "ready"].includes(selectedJob.status);
   const isRegeneratingPdf = isPdfRegenerating(selectedJob);
+  // The combined download only has something to fetch when the resume PDF is
+  // ready (not mid-regeneration) or a cover letter exists.
+  const canDownloadAnyPdf =
+    (hasResumePdf && !isRegeneratingPdf) || hasCoverLetter;
   const isStalePdf = isPdfStale(selectedJob);
-  const pdfLabels = getPdfActionLabels(selectedJob);
   const pdfRegeneratingReason = isRegeneratingPdf
     ? PDF_REGENERATING_MESSAGE
     : null;
   const pdfActionDisabled = !selectedJob.pdfPath || isRegeneratingPdf;
+  // Combined resume + cover-letter rebuild. Greyed with a hover reason when an
+  // uploaded PDF is present (can't overwrite it) or no resume exists yet.
+  const regenerateBusy = isProcessing || isGeneratingCoverLetter;
+  const isPostApplication =
+    selectedJob.status === "applied" || selectedJob.status === "in_progress";
+  // Rebuild is possible only when we own the tailored PDF: a resume exists, it
+  // isn't an uploaded file (can't overwrite those), and the job is still
+  // pre-application. Uploaded resumes fall back to "Final check" as the CTA.
+  const canRebuildDocs = hasResumePdf && !hasUploadedDoc && !isPostApplication;
+
+  // The header CTA walks a job through Brief → Tailoring → Apply while it is
+  // still pre-application; once applied it falls back to the status action.
+  const isPreApplication =
+    selectedJob.status === "discovered" || selectedJob.status === "ready";
+  const primaryStep: {
+    label: string;
+    icon: React.ReactNode;
+    onClick: () => void | Promise<void>;
+    disabled: boolean;
+    reason: string | null;
+    showKbd: boolean;
+    // null = use the status tone; otherwise a step-colored button class.
+    colorClass: string | null;
+  } = (() => {
+    const busyIcon = <Loader2 className="h-3.5 w-3.5 animate-spin" />;
+    // Step colors so the flow reads left-to-right: Brief blue → Tailoring
+    // amber → Apply green.
+    const tailoringColor = "bg-amber-600 text-white hover:bg-amber-500";
+    const applyColor = "bg-emerald-600 text-white hover:bg-emerald-500";
+    if (isPreApplication && inspectorTab === "brief") {
+      return {
+        label: "Start Tailoring",
+        icon: primaryBusy ? busyIcon : null,
+        onClick: () => setInspectorTab("tailoring"),
+        disabled: primaryBusy,
+        reason: null,
+        showKbd: false,
+        colorClass: tailoringColor,
+      };
+    }
+    if (isPreApplication && inspectorTab === "tailoring") {
+      const building = isBuildingPdf || Boolean(selectedJob.pdfRegenerating);
+      // States:
+      //  - everything built (rebuildable) → amber "Rebuild" so the user can keep
+      //    iterating; a separate green "Final check" button advances to Apply.
+      //  - everything built (uploaded, not rebuildable) → green "Final check".
+      //  - draft ready, PDF not built/stale → "Build PDF" (build it; e.g. an
+      //    auto-drafted high-rated job arrives ready but unbuilt)
+      //  - no sections yet   → amber "Finish tailoring" warning
+      if (finalCheckReady && canRebuildDocs) {
+        // Spin from the click (isProcessing flips synchronously) through the
+        // server-side rebuild (pdfRegenerating), so the ring never lags.
+        const rebuilding = building || isProcessing;
+        return {
+          label: rebuilding ? "Building…" : "Rebuild",
+          icon: rebuilding ? (
+            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+          ) : (
+            <RefreshCcw className="h-3.5 w-3.5" />
+          ),
+          onClick: () => void handleRegenerateDocs(),
+          disabled: primaryBusy || building,
+          reason: null,
+          showKbd: false,
+          colorClass: tailoringColor,
+        };
+      }
+      if (finalCheckReady) {
+        return {
+          label: "Final check",
+          icon: primaryBusy ? busyIcon : null,
+          onClick: requestFinalCheck,
+          disabled: primaryBusy,
+          reason: null,
+          showKbd: false,
+          colorClass: applyColor,
+        };
+      }
+      if (draftReady) {
+        return {
+          label: building ? "Building…" : "Build PDF",
+          icon: building ? (
+            <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+          ) : (
+            <FileText className="h-3.5 w-3.5" />
+          ),
+          onClick: () => void handleBuildPdf(),
+          disabled: primaryBusy || building,
+          reason: null,
+          showKbd: false,
+          colorClass: tailoringColor,
+        };
+      }
+      return {
+        label: "Finish tailoring",
+        icon: <AlertTriangle className="h-3.5 w-3.5" />,
+        onClick: requestFinalCheck,
+        disabled: true,
+        reason: "Generate your resume sections first.",
+        showKbd: false,
+        colorClass: tailoringColor,
+      };
+    }
+    if (isPreApplication) {
+      // Apply tab. Only enabled once the application materials are ready.
+      return {
+        label: applyLabel,
+        icon: renderApplyIcon("h-3.5 w-3.5"),
+        onClick: requestMarkApplied,
+        disabled: primaryBusy || !applicationKitReady,
+        reason: applicationKitReady
+          ? null
+          : "Get your application materials ready first.",
+        showKbd: selectedJob.status === "ready" && applyPhase === "idle",
+        colorClass: applyColor,
+      };
+    }
+    if (selectedJob.status === "applied") {
+      // Move to In Progress shares the ring → checkmark animation.
+      return {
+        label:
+          applyPhase === "loading"
+            ? "Moving…"
+            : applyPhase === "success"
+              ? "Moved"
+              : "Move to In Progress",
+        icon: renderApplyIcon("h-3.5 w-3.5"),
+        onClick: handlePrimaryAction,
+        disabled: primaryBusy,
+        reason: null,
+        showKbd: false,
+        colorClass: null,
+      };
+    }
+    if (selectedJob.status === "in_progress") {
+      // In-progress jobs are monitored on the Job Page timeline.
+      return {
+        label: "View Timeline",
+        icon: null,
+        onClick: () => openJobPage("timeline"),
+        disabled: false,
+        reason: null,
+        showKbd: false,
+        colorClass: null,
+      };
+    }
+    // processing / skipped / expired: plain status action.
+    return {
+      label: getPrimaryAction(selectedJob),
+      icon: primaryBusy ? busyIcon : <CheckCircle2 className="h-3.5 w-3.5" />,
+      onClick: handlePrimaryAction,
+      disabled: primaryBusy || selectedJob.status === "processing",
+      reason: null,
+      showKbd: false,
+      colorClass: null,
+    };
+  })();
+
+  const regenerateDocsReason = isPostApplication
+    ? "This job is already applied — rebuilding is locked."
+    : hasUploadedDoc
+      ? "Delete the uploaded PDF in the job's documents to rebuild from your tailored content."
+      : !hasResumePdf
+        ? "Tailor this job and generate the resume first."
+        : null;
   const tone = statusTone[selectedJob.status];
   const openListingIsPrimary =
     selectedJob.status === "ready" && hasJobListing && !hasOpenedJobListing;
-  const markAppliedIsPrimary =
-    selectedJob.status === "ready" && (!hasJobListing || hasOpenedJobListing);
   const activeApplyCtaClassName =
     "border-emerald-500/40 bg-emerald-600 text-white hover:bg-emerald-500 hover:text-white";
+  // When the tailoring CTA is showing "Rebuild" (everything current + owned),
+  // pair it with a green "Final check" advance button so the apply step — and
+  // its no-cover-letter prompt — stays reachable without leaving the primary
+  // slot occupied.
+  const showTailoringFinalCheck =
+    isPreApplication &&
+    inspectorTab === "tailoring" &&
+    finalCheckReady &&
+    canRebuildDocs;
   return (
     <Tabs
       value={inspectorTab}
@@ -596,27 +1114,44 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
               triggerVariant="ghost"
               triggerClassName="w-full min-w-0 justify-start overflow-hidden sm:w-auto"
             />
-            <Button
-              size="sm"
-              onClick={() => void handlePrimaryAction()}
-              disabled={primaryBusy || selectedJob.status === "processing"}
-              className={cn(
-                "col-start-1 row-start-2 w-full min-w-0 justify-start sm:w-auto sm:justify-center",
-                tone.button,
-              )}
-            >
-              {primaryBusy ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : selectedJob.status === "discovered" ? (
-                <Sparkles className="h-3.5 w-3.5" />
-              ) : (
-                <CheckCircle2 className="h-3.5 w-3.5" />
-              )}
-              {getPrimaryAction(selectedJob)}
-              {selectedJob.status === "ready" ? (
-                <KbdHint shortcut="a" className="ml-1" />
+            <div className="col-start-1 row-start-2 flex min-w-0 gap-2 sm:contents">
+              <TooltipWhenDisabled
+                reason={primaryStep.disabled ? primaryStep.reason : null}
+                className="min-w-0 flex-1 sm:w-auto sm:flex-none"
+              >
+                <Button
+                  size="sm"
+                  onClick={() => void primaryStep.onClick()}
+                  disabled={primaryStep.disabled}
+                  className={cn(
+                    "w-full min-w-0 justify-start sm:w-auto sm:justify-center",
+                    primaryStep.colorClass ?? tone.button,
+                  )}
+                >
+                  <span className="relative z-10 inline-flex min-w-0 items-center gap-1.5">
+                    {primaryStep.icon}
+                    {primaryStep.label}
+                    {primaryStep.showKbd ? (
+                      <KbdHint shortcut="a" className="ml-1" />
+                    ) : null}
+                  </span>
+                </Button>
+              </TooltipWhenDisabled>
+              {showTailoringFinalCheck ? (
+                <Button
+                  size="sm"
+                  onClick={requestFinalCheck}
+                  className={cn(
+                    "min-w-0 flex-1 justify-center sm:w-auto sm:flex-none",
+                    activeApplyCtaClassName,
+                  )}
+                >
+                  <span className="relative z-10 inline-flex min-w-0 items-center gap-1.5">
+                    Final check
+                  </span>
+                </Button>
               ) : null}
-            </Button>
+            </div>
 
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -634,13 +1169,9 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                   <Edit2 className="mr-2 h-4 w-4" />
                   Edit details
                 </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={() => {
-                    setInspectorTab("brief");
-                  }}
-                >
-                  <Edit2 className="mr-2 h-4 w-4" />
-                  View job description
+                <DropdownMenuItem onSelect={() => openJobPage()}>
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  Open Job Page
                 </DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => void handleCopyInfo()}>
                   <Copy className="mr-2 h-4 w-4" />
@@ -648,7 +1179,7 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onSelect={() => rescoreJob(selectedJob.id)}
-                  disabled={isRescoring}
+                  disabled={isRescoring || isPostApplication}
                 >
                   <RefreshCcw
                     className={cn(
@@ -659,51 +1190,122 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                   {isRescoring ? "Recalculating..." : "Recalculate match"}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
-                {canGenerate && (
+                <Tip
+                  asChild
+                  content={regenerateDocsReason}
+                  contentClassName="max-w-xs text-center"
+                >
                   <DropdownMenuItem
-                    onSelect={() => void handleProcess()}
-                    disabled={isProcessing}
+                    onSelect={(event) => {
+                      if (regenerateDocsReason || regenerateBusy) {
+                        event.preventDefault();
+                        return;
+                      }
+                      void handleRegenerateDocs();
+                    }}
+                    aria-disabled={Boolean(regenerateDocsReason)}
+                    className={cn(
+                      regenerateDocsReason &&
+                        "cursor-not-allowed opacity-50 focus:bg-transparent",
+                    )}
                   >
                     <RefreshCcw
                       className={cn(
                         "mr-2 h-4 w-4",
-                        isProcessing && "animate-spin",
+                        regenerateBusy && "animate-spin",
                       )}
                     />
-                    {selectedJob.status === "ready"
-                      ? "Regenerate PDF"
-                      : "Generate PDF"}
+                    Build PDF
                   </DropdownMenuItem>
-                )}
-                <DropdownMenuItem
-                  onSelect={() => uploadPdfInputRef.current?.click()}
-                  disabled={isUploadingPdf}
-                >
-                  <Upload className="mr-2 h-4 w-4" />
-                  {isUploadingPdf
-                    ? "Uploading PDF..."
-                    : selectedJob.pdfPath
-                      ? "Replace PDF"
-                      : "Upload PDF"}
-                </DropdownMenuItem>
-                {selectedJob.pdfPath && (
-                  <>
+                </Tip>
+                <DropdownMenuSub open={isPostApplication ? false : undefined}>
+                  <Tip
+                    asChild
+                    content={
+                      isPostApplication
+                        ? "This job is already applied — uploads are locked."
+                        : null
+                    }
+                    contentClassName="max-w-xs text-center"
+                  >
+                    <DropdownMenuSubTrigger
+                      aria-disabled={isPostApplication}
+                      className={cn(
+                        isPostApplication &&
+                          "cursor-not-allowed opacity-50 focus:bg-transparent",
+                      )}
+                    >
+                      <Upload className="mr-2 h-4 w-4" />
+                      {isUploadingPdf ||
+                      isUploadingCoverLetter ||
+                      isUploadingDocument
+                        ? "Uploading..."
+                        : "Upload PDF"}
+                    </DropdownMenuSubTrigger>
+                  </Tip>
+                  <DropdownMenuSubContent>
+                    <DropdownMenuItem
+                      onSelect={() => uploadDocumentInputRef.current?.click()}
+                      disabled={isUploadingDocument || isPostApplication}
+                    >
+                      <Paperclip className="mr-2 h-4 w-4" />
+                      Upload document
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() => uploadPdfInputRef.current?.click()}
+                      disabled={
+                        isUploadingPdf || isPostApplication || resumeUploaded
+                      }
+                    >
+                      <FileText className="mr-2 h-4 w-4" />
+                      {selectedJob.pdfPath ? "Replace resume" : "Upload resume"}
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onSelect={() =>
+                        uploadCoverLetterInputRef.current?.click()
+                      }
+                      disabled={
+                        isUploadingCoverLetter ||
+                        isPostApplication ||
+                        coverUploaded
+                      }
+                    >
+                      <FileSignature className="mr-2 h-4 w-4" />
+                      {selectedJob.coverLetterPath
+                        ? "Replace cover letter"
+                        : "Upload cover letter"}
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <ExternalLink className="mr-2 h-4 w-4" />
+                    Open PDF
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent>
                     <DropdownMenuItem
                       onSelect={handleOpenPdf}
                       disabled={pdfActionDisabled}
                     >
-                      <ExternalLink className="mr-2 h-4 w-4" />
-                      {pdfLabels.view}
+                      <FileText className="mr-2 h-4 w-4" />
+                      Open resume
                     </DropdownMenuItem>
                     <DropdownMenuItem
-                      onSelect={handleDownloadPdf}
-                      disabled={pdfActionDisabled}
+                      onSelect={handleOpenCoverLetter}
+                      disabled={!hasCoverLetter}
                     >
-                      <Download className="mr-2 h-4 w-4" />
-                      {pdfLabels.download}
+                      <FileSignature className="mr-2 h-4 w-4" />
+                      Open cover letter
                     </DropdownMenuItem>
-                  </>
-                )}
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+                <DropdownMenuItem
+                  onSelect={() => void handleDownloadAll()}
+                  disabled={!canDownloadAnyPdf}
+                >
+                  <Download className="mr-2 h-4 w-4" />
+                  Download PDF
+                </DropdownMenuItem>
                 {canSkip && (
                   <>
                     <DropdownMenuSeparator />
@@ -726,11 +1328,11 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
         <TabsContent value="brief" className="space-y-4">
           {!brief && (
             <div className="grid gap-2 sm:grid-cols-2">
+              <Stat label="Role" value={selectedJob.roleFamily} />
               <Stat label="Location" value={selectedJob.location} tone="blue" />
               <Stat label="Salary" value={selectedJob.salary} tone="green" />
               <Stat label="Level" value={selectedJob.jobLevel} />
               <Stat label="Function" value={selectedJob.jobFunction} />
-              <Stat label="Type" value={selectedJob.jobType} />
               <Stat label="Discipline" value={selectedJob.disciplines} />
             </div>
           )}
@@ -739,7 +1341,8 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
           <JobDescriptionPanel
             description={selectedJob.jobDescription}
             jobUrl={selectedJob.jobUrl}
-            onSave={handleSaveDescription}
+            onSave={isPostApplication ? undefined : handleSaveDescription}
+            defaultOpen={false}
           />
         </TabsContent>
 
@@ -749,6 +1352,10 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
             job={selectedJob}
             onUpdate={onJobUpdated}
             onDirtyChange={onPauseRefreshChange}
+            focusCoverLetter={focusCoverLetter}
+            onCoverLetterFocusConsumed={handleCoverLetterFocusConsumed}
+            onRegisterBuildPdf={registerBuildPdf}
+            onRegisterCoverLetterBuild={registerCoverLetterBuild}
           />
         </TabsContent>
 
@@ -801,14 +1408,12 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                   </div>
 
                   <Button
-                    asChild
                     variant="outline"
                     className="w-full justify-center sm:w-auto sm:shrink-0"
+                    onClick={() => openJobPage()}
                   >
-                    <a href={`/job/${selectedJob.id}`}>
-                      Open Job Page
-                      <ArrowRight />
-                    </a>
+                    Open Job Page
+                    <ArrowRight />
                   </Button>
                 </div>
               </div>
@@ -821,11 +1426,11 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={handleDownloadPdf}
-                  disabled={pdfActionDisabled}
+                  onClick={() => void handleDownloadAll()}
+                  disabled={!canDownloadAnyPdf}
                 >
                   <Download className="size-3.5" />
-                  {pdfLabels.download}
+                  Download PDF
                   <KbdHint shortcut="d" className="ml-auto" />
                 </Button>
               </TooltipWhenDisabled>
@@ -837,26 +1442,28 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                 disabled={!hasJobListing}
                 onClick={handleJobListingOpened}
               />
-              <Button
-                variant={markAppliedIsPrimary ? "default" : "outline"}
-                className={cn(markAppliedIsPrimary && activeApplyCtaClassName)}
-                size="sm"
-                onClick={() => void handleMarkApplied()}
-                disabled={selectedJob.status !== "ready" || primaryBusy}
+              <TooltipWhenDisabled
+                reason={
+                  canDownloadAnyPdf ? null : "Build or upload a PDF to view it."
+                }
+                className="w-full"
               >
-                {isApplying ? (
-                  <Loader2 className="size-3.5 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="size-3.5" />
-                )}
-                Mark Applied
-                <KbdHint shortcut="a" className="ml-auto" />
-              </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="w-full"
+                  onClick={() => openJobPage("documents")}
+                  disabled={!canDownloadAnyPdf}
+                >
+                  <FileText className="size-3.5" />
+                  View PDF
+                </Button>
+              </TooltipWhenDisabled>
             </div>
 
             <div>
               <div className="mb-2 text-lg font-semibold tracking-normal text-foreground/90">
-                Application kit
+                Application Kit
               </div>
               <div className="overflow-hidden rounded-md border border-border/45 bg-muted/5">
                 <KitStatus
@@ -871,8 +1478,29 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
                 />
                 <KitStatus
                   icon={<FileText className="h-4 w-4" />}
-                  label="Resume PDF"
+                  label="Resume"
                   ready={hasResumePdf}
+                  readyLabel={
+                    selectedJob.pdfSource === "uploaded" ? "Uploaded" : "Ready"
+                  }
+                />
+                <KitStatus
+                  icon={<FileSignature className="h-4 w-4" />}
+                  label="Cover letter"
+                  ready={hasCoverLetter}
+                  readyLabel={
+                    selectedJob.coverLetterSource === "uploaded"
+                      ? "Uploaded"
+                      : "Ready"
+                  }
+                  optional
+                />
+                <KitStatus
+                  icon={<Paperclip className="h-4 w-4" />}
+                  label="Additional documents"
+                  ready={additionalDocumentsCount > 0}
+                  readyLabel={`${additionalDocumentsCount} included`}
+                  optional
                 />
                 <KitStatus
                   icon={<FolderKanban className="h-4 w-4" />}
@@ -933,7 +1561,76 @@ export const JobDetailPanel: React.FC<JobDetailPanelProps> = ({
             }
           }}
         />
+        <input
+          ref={uploadCoverLetterInputRef}
+          type="file"
+          accept="application/pdf,.pdf"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) {
+              void handleUploadCoverLetter(file);
+            }
+          }}
+        />
+        <input
+          ref={uploadDocumentInputRef}
+          type="file"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            if (file) {
+              void handleUploadDocument(file);
+            }
+          }}
+        />
       </div>
+
+      <AlertDialog
+        open={applyPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open) setApplyPrompt(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {applyPrompt === "final-check-no-cover"
+                ? "Continue without a cover letter?"
+                : "Mark this job as applied?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {applyPrompt === "final-check-no-cover"
+                ? "No cover letter has been generated for this job. Add one now, or continue to the final check with just your resume."
+                : "Applying locks tailoring and documents — afterwards you can only monitor the job and ask the assistant."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            {applyPrompt === "final-check-no-cover" ? (
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setApplyPrompt(null);
+                    setInspectorTab("tailoring");
+                    setFocusCoverLetter(true);
+                  }}
+                >
+                  Add cover letter
+                </Button>
+                <AlertDialogAction onClick={() => setInspectorTab("apply")}>
+                  Continue
+                </AlertDialogAction>
+              </>
+            ) : (
+              <AlertDialogAction onClick={() => void confirmMarkApplied()}>
+                Mark applied
+              </AlertDialogAction>
+            )}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Tabs>
   );
 };

@@ -113,9 +113,15 @@ function RunsList(props: {
   selectedRunId: string | null;
   onSelectRun: (runId: string) => void;
 }) {
+  // Fixed column widths shared by the header and every row. Separate grids only
+  // line up if the templates are identical and not "auto" (which sizes to each
+  // grid's own content).
+  const gridTemplate = "md:grid-cols-[minmax(0,1fr)_7rem_5rem_5rem]";
   return (
     <div className="space-y-2">
-      <div className="hidden grid-cols-[minmax(0,1.6fr)_auto_auto_auto] gap-3 px-3 text-xs text-muted-foreground md:grid">
+      <div
+        className={`hidden gap-3 px-3 text-xs text-muted-foreground md:grid ${gridTemplate}`}
+      >
         <div>Run</div>
         <div>Status</div>
         <div>Discovered</div>
@@ -135,7 +141,7 @@ function RunsList(props: {
               key={run.id}
               onClick={() => props.onSelectRun(run.id)}
               selected={isSelected}
-              className={`grid gap-3 rounded-lg border px-3 py-3 md:grid-cols-[minmax(0,1.6fr)_auto_auto_auto] ${
+              className={`grid gap-3 rounded-lg border px-3 py-3 ${gridTemplate} ${
                 isSelected
                   ? "border-primary/40 bg-primary/5"
                   : "border-border/60 hover:bg-muted/30"
@@ -157,7 +163,7 @@ function RunsList(props: {
               <div className="md:self-center">
                 <RunStatusBadge status={displayStatus} />
               </div>
-              <div className="md:self-center md:text-right">
+              <div className="md:self-center">
                 <div className="text-xs text-muted-foreground md:hidden">
                   Discovered
                 </div>
@@ -165,7 +171,7 @@ function RunsList(props: {
                   {run.jobsDiscovered.toLocaleString()}
                 </div>
               </div>
-              <div className="md:self-center md:text-right">
+              <div className="md:self-center">
                 <div className="text-xs text-muted-foreground md:hidden">
                   Processed
                 </div>
@@ -461,7 +467,9 @@ export const OverviewPipelineRunsSection: React.FC = () => {
   const pipelineStatusQuery = useQuery({
     queryKey: queryKeys.pipeline.status(),
     queryFn: api.getPipelineStatus,
-    refetchInterval: 15000,
+    // Poll fast while a run is active so the "running" state clears promptly
+    // when the pipeline finishes; back off to a slow heartbeat when idle.
+    refetchInterval: (query) => (query.state.data?.isRunning ? 2000 : 15000),
     refetchIntervalInBackground: true,
   });
   const pipelineRunsQuery = useQuery({

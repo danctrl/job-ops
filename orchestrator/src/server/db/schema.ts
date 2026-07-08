@@ -199,6 +199,7 @@ export const jobs = sqliteTable(
     isRemote: integer("is_remote", { mode: "boolean" }),
     jobLevel: text("job_level"),
     jobFunction: text("job_function"),
+    roleFamily: text("role_family"),
     listingType: text("listing_type"),
     emails: text("emails"),
     companyIndustry: text("company_industry"),
@@ -237,6 +238,8 @@ export const jobs = sqliteTable(
     tailoredSummary: text("tailored_summary"),
     tailoredHeadline: text("tailored_headline"),
     tailoredSkills: text("tailored_skills"),
+    tailoredExperience: text("tailored_experience"),
+    coverageScore: integer("coverage_score"),
     selectedProjectIds: text("selected_project_ids"),
     pdfPath: text("pdf_path"),
     pdfSource: text("pdf_source", { enum: ["generated", "uploaded"] }),
@@ -245,6 +248,18 @@ export const jobs = sqliteTable(
       .default(false),
     pdfFingerprint: text("pdf_fingerprint"),
     pdfGeneratedAt: text("pdf_generated_at"),
+    coverLetterPath: text("cover_letter_path"),
+    coverLetterGeneratedAt: text("cover_letter_generated_at"),
+    coverLetterSource: text("cover_letter_source", {
+      enum: ["generated", "uploaded"],
+    }),
+    coverLetterDetails: text("cover_letter_details"),
+    coverLetterFingerprint: text("cover_letter_fingerprint"),
+    coverLetterRegenerating: integer("cover_letter_regenerating", {
+      mode: "boolean",
+    })
+      .notNull()
+      .default(false),
     tracerLinksEnabled: integer("tracer_links_enabled", { mode: "boolean" })
       .notNull()
       .default(false),
@@ -740,6 +755,9 @@ export const designResumeDocuments = sqliteTable("design_resume_documents", {
   sourceResumeId: text("source_resume_id"),
   sourceMode: text("source_mode"),
   importedAt: text("imported_at"),
+  // Language of this master. Null/"english" = the primary master (default);
+  // other values ("german", …) are hand-authored language-specific masters.
+  language: text("language"),
   createdAt: text("created_at").notNull().default(sql`(datetime('now'))`),
   updatedAt: text("updated_at").notNull().default(sql`(datetime('now'))`),
 });

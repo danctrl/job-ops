@@ -1,6 +1,8 @@
 import type {
   ApplicationStage,
   ApplicationTask,
+  CoverLetterRenderer,
+  CoverLetterTheme,
   Job,
   JobActionRequest,
   JobActionResponse,
@@ -12,6 +14,7 @@ import type {
   JobsListResponse,
   JobsRevisionResponse,
   JobTracerLinksResponse,
+  LatexTheme,
   PostApplicationJobEmailsResponse,
   StageEvent,
   StageEventMetadata,
@@ -210,6 +213,92 @@ export async function getJobPdfBlob(id: string): Promise<Blob> {
       cache: "no-store",
     },
   );
+}
+
+export async function deleteJobPdf(id: string): Promise<Job> {
+  return fetchApi<Job>(`/jobs/${encodeURIComponent(id)}/pdf`, {
+    method: "DELETE",
+  });
+}
+
+export async function generateCoverLetter(
+  id: string,
+  opts?: { render?: boolean },
+): Promise<Job> {
+  return fetchApi<Job>(
+    `/jobs/${encodeURIComponent(id)}/generate-cover-letter`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ render: opts?.render ?? true }),
+    },
+  );
+}
+
+export interface CoverLetterAddressSuggestion {
+  companyName: string;
+  contactPerson: string;
+  addressLines: string[];
+}
+
+export async function generateCoverLetterAddress(
+  id: string,
+): Promise<CoverLetterAddressSuggestion> {
+  return fetchApi<CoverLetterAddressSuggestion>(
+    `/jobs/${encodeURIComponent(id)}/cover-letter/address`,
+    { method: "POST" },
+  );
+}
+
+export async function uploadCoverLetterPdf(
+  id: string,
+  input: {
+    fileName: string;
+    mediaType?: string;
+    dataBase64: string;
+  },
+): Promise<Job> {
+  return fetchApi<Job>(`/jobs/${encodeURIComponent(id)}/cover-letter/pdf`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function deleteCoverLetterPdf(id: string): Promise<Job> {
+  return fetchApi<Job>(`/jobs/${encodeURIComponent(id)}/cover-letter/pdf`, {
+    method: "DELETE",
+  });
+}
+
+export async function getJobCoverLetterBlob(id: string): Promise<Blob> {
+  const cacheBuster = Date.now().toString(36);
+  return fetchBlobApi(
+    withQuery(`/jobs/${encodeURIComponent(id)}/cover-letter/pdf`, {
+      v: cacheBuster,
+    }),
+    {
+      cache: "no-store",
+    },
+  );
+}
+
+export async function rerenderCoverLetter(id: string): Promise<Job> {
+  return fetchApi<Job>(`/jobs/${encodeURIComponent(id)}/cover-letter/render`, {
+    method: "POST",
+  });
+}
+
+export async function getCoverLetterSamplePreviewBlob(override?: {
+  renderer?: CoverLetterRenderer;
+  theme?: CoverLetterTheme;
+  latexTheme?: LatexTheme;
+}): Promise<Blob> {
+  return fetchBlobApi("/cover-letter/preview-sample", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(override ?? {}),
+    cache: "no-store",
+  });
 }
 
 export async function getTracerAnalytics(options?: {

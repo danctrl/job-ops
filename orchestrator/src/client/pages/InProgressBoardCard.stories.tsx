@@ -32,8 +32,9 @@ const makeJob = (overrides: Partial<JobListItem> = {}): JobListItem => ({
   appliedDuplicateMatch: null,
   jobType: null,
   jobFunction: null,
+  roleFamily: null,
   pdfRegenerating: false,
-  pdfFreshness: "missing",
+  resumeFreshness: "missing",
   salaryMinAmount: null,
   salaryMaxAmount: null,
   salaryCurrency: null,
@@ -58,8 +59,6 @@ const cardAccentClass = (stage: ApplicationStage) => {
   return "";
 };
 
-const noopDrag = () => {};
-
 const BoardCardFrame: React.FC<{
   label: string;
   children: React.ReactNode;
@@ -73,7 +72,7 @@ const BoardCardFrame: React.FC<{
 );
 
 const InteractiveBoardCard: React.FC<
-  Omit<InProgressBoardCardProps, "onLogEvent" | "onDragStart" | "onDragEnd">
+  Omit<InProgressBoardCardProps, "onLogEvent">
 > = (props) => {
   const [lastAction, setLastAction] = React.useState<string | null>(null);
 
@@ -81,8 +80,6 @@ const InteractiveBoardCard: React.FC<
     <div className="space-y-2">
       <InProgressBoardCard
         {...props}
-        onDragStart={noopDrag}
-        onDragEnd={noopDrag}
         onLogEvent={() =>
           setLastAction(`Log event · ${props.job.title} (${props.stage})`)
         }

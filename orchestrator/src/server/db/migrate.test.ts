@@ -333,4 +333,64 @@ describe.sequential("database migrations", () => {
       },
     );
   });
+
+  it("preserves cover-letter details and fingerprint across the jobs table rebuild", async () => {
+    tempDir = await mkdtemp(join(tmpdir(), "job-ops-migrate-"));
+    const script = `
+      import { join } from "node:path";
+      import { pathToFileURL } from "node:url";
+      import Database from "better-sqlite3";
+
+      const dbPath = join(process.env.DATA_DIR, "jobs.db");
+      const migrationUrl = pathToFileURL(join(process.cwd(), "src/server/db/migrate.ts")).href;
+      await import(\`\${migrationUrl}?run=initial\`);
+
+      const sqlite = new Database(dbPath);
+      sqlite
+        .prepare(
+          "INSERT INTO jobs(id, title, employer, job_url, cover_letter_details, cover_letter_fingerprint, cover_letter_regenerating) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          "cover-letter-job",
+          "Cover Letter Job",
+          "Acme",
+          "https://example.com/cover-letter-job",
+          '{"body":"Dear hiring team"}',
+          "cl-fingerprint-123",
+          1,
+        );
+      sqlite.close();
+
+      // A second migration import re-runs the jobs table rebuild, which must
+      // carry the cover_letter_* columns over instead of nulling them.
+      await import(\`\${migrationUrl}?run=rebuild\`);
+
+      const migratedDb = new Database(dbPath, { readonly: true });
+      const row = migratedDb
+        .prepare("SELECT cover_letter_details, cover_letter_fingerprint, cover_letter_regenerating FROM jobs WHERE id = ?")
+        .get("cover-letter-job");
+      if (row?.cover_letter_details !== '{"body":"Dear hiring team"}') {
+        throw new Error(\`cover_letter_details lost across rebuild, got \${row?.cover_letter_details}\`);
+      }
+      if (row?.cover_letter_fingerprint !== "cl-fingerprint-123") {
+        throw new Error(\`cover_letter_fingerprint lost across rebuild, got \${row?.cover_letter_fingerprint}\`);
+      }
+      if (row?.cover_letter_regenerating !== 1) {
+        throw new Error(\`cover_letter_regenerating lost across rebuild, got \${row?.cover_letter_regenerating}\`);
+      }
+      migratedDb.close();
+    `;
+
+    execFileSync(
+      process.execPath,
+      ["--import", "tsx", "--input-type=module", "-e", script],
+      {
+        env: {
+          ...process.env,
+          DATA_DIR: tempDir,
+        },
+        stdio: "pipe",
+      },
+    );
+  });
 });

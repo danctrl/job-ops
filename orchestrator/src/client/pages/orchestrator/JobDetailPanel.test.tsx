@@ -11,6 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import type React from "react";
+import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JobDetailPanel } from "./JobDetailPanel";
 
@@ -55,6 +56,17 @@ vi.mock("@/components/ui/dropdown-menu", () => {
       </button>
     ),
     DropdownMenuSeparator: () => <hr />,
+    DropdownMenuSub: ({ children }: { children: React.ReactNode }) => (
+      <div>{children}</div>
+    ),
+    DropdownMenuSubTrigger: ({ children }: { children: React.ReactNode }) => (
+      <button type="button" role="menuitem">
+        {children}
+      </button>
+    ),
+    DropdownMenuSubContent: ({ children }: { children: React.ReactNode }) => (
+      <div>{children}</div>
+    ),
   };
 });
 
@@ -154,7 +166,11 @@ vi.mock("sonner", () => ({
 const renderJobDetailPanel = async (
   props: React.ComponentProps<typeof JobDetailPanel>,
 ) => {
-  const rendered = render(<JobDetailPanel {...props} />);
+  const rendered = render(
+    <MemoryRouter>
+      <JobDetailPanel {...props} />
+    </MemoryRouter>,
+  );
   await act(async () => {
     await Promise.resolve();
   });
@@ -162,6 +178,11 @@ const renderJobDetailPanel = async (
 };
 
 const getApplyPanel = () => screen.getByRole("tabpanel", { name: /apply/i });
+
+// The Job description panel is a collapsed accordion by default; expand it to
+// reveal the description body.
+const expandJobDescription = () =>
+  fireEvent.click(screen.getByRole("button", { name: /job description/i }));
 
 describe("JobDetailPanel", () => {
   beforeEach(() => {
@@ -190,12 +211,29 @@ describe("JobDetailPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("opens a ready job on the Apply tab by default", async () => {
+    const job = createJob({ id: "job-ready", status: "ready" });
+
+    await renderJobDetailPanel({
+      activeTab: "ready",
+      activeJobs: [job],
+      selectedJob: job,
+      onSelectJobId: vi.fn(),
+      onJobUpdated: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expect(screen.getByRole("tab", { name: /apply/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
   it("shows stale PDF copy and old-PDF actions in the application kit", async () => {
     const job = createJob({
       status: "ready",
       pdfPath: "data/pdfs/job-1.pdf",
       pdfSource: "generated",
-      pdfFreshness: "stale",
+      resumeFreshness: "stale",
     });
 
     await renderJobDetailPanel({
@@ -206,25 +244,23 @@ describe("JobDetailPanel", () => {
       onJobUpdated: vi.fn().mockResolvedValue(undefined),
     });
 
-    fireEvent.click(screen.getByRole("tab", { name: /apply/i }));
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /apply/i }));
 
     expect(
       screen.getByText(
         "PDF is out of date. A new one will regenerate automatically.",
       ),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /download pdf/i })).toBeEnabled();
     expect(
-      screen.getByRole("button", { name: /download old pdf/i }),
-    ).toBeEnabled();
-    expect(
-      within(getApplyPanel()).queryByRole("button", { name: /view old pdf/i }),
+      within(getApplyPanel()).queryByRole("button", { name: /open resume/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("menuitem", { name: /view old pdf/i }),
+      screen.getByRole("menuitem", { name: /open resume/i }),
     ).toBeEnabled();
   });
 
-  it("promotes Mark Applied after the ready job listing is opened", async () => {
+  it("de-emphasizes the job listing CTA once it is opened", async () => {
     const job = createJob({
       status: "ready",
       jobUrl: "https://example.com/apply",
@@ -239,21 +275,18 @@ describe("JobDetailPanel", () => {
       onJobUpdated: vi.fn().mockResolvedValue(undefined),
     });
 
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /apply/i }));
+
     const applyPanel = within(getApplyPanel());
     const openListing = applyPanel.getByRole("link", {
       name: /open job listing/i,
     });
-    const markApplied = applyPanel.getByRole("button", {
-      name: /mark applied/i,
-    });
 
     expect(openListing).toHaveClass("bg-emerald-600");
-    expect(markApplied).not.toHaveClass("bg-emerald-600");
 
     fireEvent.click(openListing);
 
     expect(openListing).not.toHaveClass("bg-emerald-600");
-    expect(markApplied).toHaveClass("bg-emerald-600");
   });
 
   it("downloads PDFs with language-aware German transliteration", async () => {
@@ -289,12 +322,13 @@ describe("JobDetailPanel", () => {
       onJobUpdated: vi.fn().mockResolvedValue(undefined),
     });
 
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /apply/i }));
     fireEvent.click(screen.getByRole("button", { name: /download pdf/i }));
 
     await waitFor(() =>
       expect(privatePdf.downloadJobPdf).toHaveBeenCalledWith(
         "job-1",
-        "Mueller_Buero_Strasse.pdf",
+        "Mueller_Buero_Strasse_resume.pdf",
       ),
     );
   });
@@ -305,7 +339,7 @@ describe("JobDetailPanel", () => {
       pdfPath: "data/pdfs/job-1.pdf",
       pdfSource: "generated",
       pdfRegenerating: true,
-      pdfFreshness: "regenerating",
+      resumeFreshness: "regenerating",
     });
 
     await renderJobDetailPanel({
@@ -316,14 +350,14 @@ describe("JobDetailPanel", () => {
       onJobUpdated: vi.fn().mockResolvedValue(undefined),
     });
 
-    fireEvent.click(screen.getByRole("tab", { name: /apply/i }));
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /apply/i }));
 
     expect(
       screen.getByRole("button", { name: /download pdf/i }),
     ).toBeDisabled();
     expect(
-      within(getApplyPanel()).queryByRole("button", { name: /view pdf/i }),
-    ).not.toBeInTheDocument();
+      within(getApplyPanel()).getByRole("button", { name: /view pdf/i }),
+    ).toBeDisabled();
   });
 
   it("shows an empty state when no job is selected", async () => {
@@ -350,6 +384,7 @@ describe("JobDetailPanel", () => {
       onJobUpdated: vi.fn().mockResolvedValue(undefined),
     });
 
+    expandJobDescription();
     expect(
       screen.getByText(
         (_, node) =>
@@ -370,6 +405,7 @@ describe("JobDetailPanel", () => {
       onJobUpdated: vi.fn().mockResolvedValue(undefined),
     });
 
+    expandJobDescription();
     expect(
       screen.getByRole("heading", { name: "Responsibilities" }),
     ).toBeInTheDocument();
@@ -413,6 +449,7 @@ describe("JobDetailPanel", () => {
       onJobUpdated: vi.fn().mockResolvedValue(undefined),
     });
 
+    expandJobDescription();
     const rawDescription = rendered.container.querySelector(
       "div.whitespace-pre-wrap",
     );
@@ -431,11 +468,13 @@ describe("JobDetailPanel", () => {
     await renderJobDetailPanel({
       activeTab: "all",
       activeJobs: [],
-      selectedJob: createJob({ status: "applied", jobDescription: "Original" }),
+      selectedJob: createJob({ status: "ready", jobDescription: "Original" }),
       onSelectJobId: vi.fn(),
       onJobUpdated,
     });
 
+    // A ready job opens on Apply — the description editor lives on Brief.
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /brief/i }));
     fireEvent.click(await screen.findByRole("button", { name: /^edit$/i }));
 
     fireEvent.change(screen.getByPlaceholderText("Enter job description..."), {
@@ -450,6 +489,22 @@ describe("JobDetailPanel", () => {
       }),
     );
     expect(onJobUpdated).toHaveBeenCalled();
+  });
+
+  it("hides description editing once a job is applied", async () => {
+    await renderJobDetailPanel({
+      activeTab: "all",
+      activeJobs: [],
+      selectedJob: createJob({ status: "applied", jobDescription: "Original" }),
+      onSelectJobId: vi.fn(),
+      onJobUpdated: vi.fn().mockResolvedValue(undefined),
+    });
+
+    expandJobDescription();
+    expect(await screen.findByText("Original")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^edit$/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("opens edit details drawer from menu and saves", async () => {
@@ -483,19 +538,33 @@ describe("JobDetailPanel", () => {
     await renderJobDetailPanel({
       activeTab: "all",
       activeJobs: [],
-      selectedJob: createJob({ status: "ready" }),
+      selectedJob: createJob({
+        status: "ready",
+        pdfPath: "data/pdfs/job-1.pdf",
+        tailoredSummary: "Summary",
+        tailoredSkills: "TypeScript, React",
+      }),
       onSelectJobId: vi.fn(),
       onJobUpdated,
     });
 
+    fireEvent.mouseDown(screen.getByRole("tab", { name: /apply/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^mark applied$/i }));
+
+    // Confirm in the apply dialog.
     fireEvent.click(
-      within(getApplyPanel()).getByRole("button", { name: /mark applied/i }),
+      within(await screen.findByRole("alertdialog")).getByRole("button", {
+        name: /mark applied/i,
+      }),
     );
 
     await waitFor(() =>
       expect(api.markAsApplied).toHaveBeenCalledWith("job-1"),
     );
-    expect(onJobUpdated).toHaveBeenCalled();
+    // onJobUpdated fires after the success-checkmark hold (~1.3s).
+    await waitFor(() => expect(onJobUpdated).toHaveBeenCalled(), {
+      timeout: 2500,
+    });
   });
 
   it("moves an applied job to in progress from the action button", async () => {
@@ -519,7 +588,10 @@ describe("JobDetailPanel", () => {
         status: "in_progress",
       }),
     );
-    expect(onJobUpdated).toHaveBeenCalled();
+    // onJobUpdated fires after the success-checkmark hold (~1.3s).
+    await waitFor(() => expect(onJobUpdated).toHaveBeenCalled(), {
+      timeout: 2500,
+    });
   });
 
   it("skips a job from the menu", async () => {

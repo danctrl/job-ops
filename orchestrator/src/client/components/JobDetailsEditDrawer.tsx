@@ -1,3 +1,4 @@
+import { isJobMetadataLocked } from "@shared/types/jobs.js";
 import type { Job } from "@shared/types.js";
 import { Loader2, Save } from "lucide-react";
 import type React from "react";
@@ -98,6 +99,8 @@ export const JobDetailsEditDrawer: React.FC<JobDetailsEditDrawerProps> = ({
   }, [job, open]);
 
   const hasJob = !!job;
+  // Posting metadata freezes once the application is out (applied / in progress).
+  const locked = job ? isJobMetadataLocked(job.status) : false;
   const tracerCanEnable = Boolean(tracerReadiness?.canEnable);
   const tracerEnableBlocked = !draft.tracerLinksEnabled && !tracerCanEnable;
   const tracerEnableBlockedReason =
@@ -233,7 +236,17 @@ export const JobDetailsEditDrawer: React.FC<JobDetailsEditDrawerProps> = ({
             </div>
           ) : (
             <>
-              <div className="mt-4 flex-1 overflow-y-auto pr-1">
+              {locked && (
+                <div className="mt-4 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-600 dark:text-amber-400">
+                  This job is{" "}
+                  {job?.status === "in_progress" ? "in progress" : "applied"} —
+                  posting details are locked and can no longer be edited.
+                </div>
+              )}
+              <fieldset
+                disabled={locked}
+                className="mt-4 flex-1 overflow-y-auto border-0 p-0 pr-1"
+              >
                 <div className="grid gap-3 sm:grid-cols-2">
                   <FieldInput
                     id="edit-job-title"
@@ -362,7 +375,7 @@ export const JobDetailsEditDrawer: React.FC<JobDetailsEditDrawerProps> = ({
                     {validationError}
                   </div>
                 )}
-              </div>
+              </fieldset>
 
               <div className="mt-4 flex items-center justify-end gap-2 border-t pt-4">
                 <Button
@@ -376,7 +389,7 @@ export const JobDetailsEditDrawer: React.FC<JobDetailsEditDrawerProps> = ({
                 <Button
                   type="button"
                   onClick={() => void handleSave()}
-                  disabled={isSaving || !isDirty}
+                  disabled={isSaving || !isDirty || locked}
                 >
                   {isSaving ? (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />

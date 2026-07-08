@@ -93,7 +93,7 @@ describe("watchlist results service", () => {
         suitabilityScore: null,
         sponsorMatchScore: null,
         pdfRegenerating: false,
-        pdfFreshness: "missing",
+        resumeFreshness: "missing",
         salaryMinAmount: null,
         salaryMaxAmount: null,
         salaryCurrency: null,

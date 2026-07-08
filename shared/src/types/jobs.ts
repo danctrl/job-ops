@@ -14,6 +14,32 @@ export type JobStatus =
   | "skipped" // User skipped this job
   | "expired"; // Deadline passed
 
+/**
+ * Once an application has been sent, the posting metadata is frozen — the
+ * documents are out in the world, so title/employer/location/etc. must not
+ * silently change under them.
+ */
+export const JOB_METADATA_LOCKED_STATUSES: ReadonlySet<JobStatus> = new Set([
+  "applied",
+  "in_progress",
+]);
+
+/** Posting metadata fields that are frozen after applying. */
+export const LOCKED_JOB_METADATA_FIELDS = [
+  "title",
+  "employer",
+  "jobUrl",
+  "applicationLink",
+  "location",
+  "salary",
+  "deadline",
+  "jobDescription",
+] as const;
+
+export function isJobMetadataLocked(status: JobStatus): boolean {
+  return JOB_METADATA_LOCKED_STATUSES.has(status);
+}
+
 export const APPLICATION_STAGES = [
   "applied",
   "recruiter_screen",
@@ -151,6 +177,18 @@ export type JobPdfFreshness =
   | "stale"
   | "regenerating";
 
+// Editable, per-job cover letter content. Stored as a JSON blob so the letter
+// can be personalized (recipient, address, salutation, closing) and the body
+// edited after generation, rather than being regenerated from scratch each time.
+export interface CoverLetterDetails {
+  body?: string; // letter body; paragraphs separated by blank lines
+  contactPerson?: string; // recipient name, e.g. "Jane Doe"
+  companyName?: string; // overrides the employer recipient line
+  addressLines?: string[]; // company address lines
+  salutation?: string; // overrides the default "Dear Hiring Manager,"
+  closing?: string; // overrides the default "Sincerely,"
+}
+
 export interface AppliedDuplicateMatch {
   jobId: string;
   title: string;
@@ -163,12 +201,11 @@ export interface AppliedDuplicateMatch {
 
 export interface JobBrief {
   role_summary: string;
+  skills_and_domain_highlights: string[];
+  tools_mentioned: string[];
   they_want: string[];
-  specifics: string[];
   company_offers: string[];
-  practical_details: string[];
   missing_or_unclear: string[];
-  repeated_signals: string[];
 }
 
 export interface Job {
@@ -206,13 +243,22 @@ export interface Job {
   tailoredSummary: string | null; // Generated resume summary
   tailoredHeadline: string | null; // Generated resume headline
   tailoredSkills: string | null; // Generated resume skills (JSON)
+  tailoredExperience: string | null; // Generated experience bullets (JSON)
+  coverageScore: number | null; // ATS keyword coverage vs job brief (0-100)
   selectedProjectIds: string | null; // Comma-separated IDs of selected projects
   pdfPath: string | null; // Path to generated PDF
   pdfSource: JobPdfSource | null; // Whether PDF was system-generated or user-uploaded
   pdfRegenerating: boolean; // Whether a PDF generation/regeneration is currently in progress for this job
-  pdfFreshness: JobPdfFreshness; // Derived freshness state for the current PDF artifact
+  resumeFreshness: JobPdfFreshness; // Derived freshness state for the current PDF artifact
   pdfFingerprint: string | null; // Stable hash of inputs that produced the current generated PDF
   pdfGeneratedAt: string | null; // Timestamp of the latest generated/uploaded PDF artifact
+  coverLetterPath: string | null; // Path to generated/uploaded cover letter PDF
+  coverLetterGeneratedAt: string | null; // Timestamp of the latest cover letter
+  coverLetterSource: JobPdfSource | null; // Whether cover letter was generated or uploaded
+  coverLetterFreshness: JobPdfFreshness; // Derived freshness state for the cover letter
+  coverLetterFingerprint: string | null; // Fingerprint of the inputs used to render the cover letter PDF
+  coverLetterRegenerating: boolean; // Whether a cover letter PDF regeneration is currently in progress
+  coverLetterDetails: CoverLetterDetails | null; // Editable per-job cover letter content
   tracerLinksEnabled: boolean; // Rewrite outbound resume links to tracer links on next PDF generation
   sponsorMatchScore: number | null; // 0-100 fuzzy match score with visa sponsors
   sponsorMatchNames: string | null; // JSON array of matched sponsor names (when 100% matches or top match)
@@ -228,6 +274,7 @@ export interface Job {
   isRemote: boolean | null;
   jobLevel: string | null;
   jobFunction: string | null;
+  roleFamily: string | null;
   listingType: string | null;
   emails: string | null;
   companyIndustry: string | null;
@@ -274,8 +321,9 @@ export type JobListItem = Pick<
   | "appliedDuplicateMatch"
   | "jobType"
   | "jobFunction"
+  | "roleFamily"
   | "pdfRegenerating"
-  | "pdfFreshness"
+  | "resumeFreshness"
   | "salaryMinAmount"
   | "salaryMaxAmount"
   | "salaryCurrency"
@@ -537,6 +585,10 @@ export interface UpdateJobInput {
   applicationLink?: string | null;
   location?: string | null;
   salary?: string | null;
+  jobType?: string | null;
+  jobLevel?: string | null;
+  workFromHomeType?: string | null;
+  isRemote?: boolean | null;
   deadline?: string | null;
   status?: JobStatus;
   outcome?: JobOutcome | null;
@@ -549,17 +601,25 @@ export interface UpdateJobInput {
   tailoredSummary?: string;
   tailoredHeadline?: string;
   tailoredSkills?: string;
+  tailoredExperience?: string;
+  coverageScore?: number | null;
   selectedProjectIds?: string;
-  pdfPath?: string;
+  pdfPath?: string | null;
   pdfSource?: JobPdfSource | null;
   pdfRegenerating?: boolean;
   pdfFingerprint?: string | null;
   pdfGeneratedAt?: string | null;
+  coverLetterPath?: string | null;
+  coverLetterGeneratedAt?: string | null;
+  coverLetterSource?: JobPdfSource | null;
+  coverLetterDetails?: CoverLetterDetails | null;
+  coverLetterRegenerating?: boolean;
   tracerLinksEnabled?: boolean;
   readyAt?: string;
   appliedAt?: string;
   sponsorMatchScore?: number;
   sponsorMatchNames?: string;
+  roleFamily?: string | null;
 }
 
 export interface CreateJobNoteInput {

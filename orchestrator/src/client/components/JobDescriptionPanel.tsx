@@ -59,6 +59,11 @@ export const JobDescriptionPanel: React.FC<JobDescriptionPanelProps> = ({
 }) => {
   const { renderMarkdownInJobDescriptions } = useSettings();
   const [isEditing, setIsEditing] = useState(false);
+  // Own the accordion open state so editing can force it open — otherwise
+  // clicking "Edit" while collapsed would hide the textarea in the panel body.
+  const [openValue, setOpenValue] = useState(
+    defaultOpen ? "job-description" : "",
+  );
   const [editedDescription, setEditedDescription] = useState(
     rawDescription ?? "",
   );
@@ -218,8 +223,9 @@ export const JobDescriptionPanel: React.FC<JobDescriptionPanelProps> = ({
     <Accordion
       type="single"
       collapsible
-      defaultValue={defaultOpen ? "job-description" : undefined}
+      value={isEditing ? "job-description" : openValue}
       onValueChange={(value) => {
+        setOpenValue(value);
         if (value === "job-description") onOpen?.();
       }}
       className={cn(

@@ -271,6 +271,10 @@ function buildScoringPrompt(
     jobTitle: job.title,
     employer: job.employer,
     location: job.location || "Not specified",
+    workplaceType:
+      job.workFromHomeType ||
+      (job.isRemote ? "remote" : null) ||
+      "Not specified",
     salary: job.salary || "Not specified",
     degreeRequired: job.degreeRequired || "Not specified",
     disciplines: job.disciplines || "Not specified",

@@ -34,7 +34,7 @@ function renderRightSidebar(overrides: Parameters<typeof createJob>[0] = {}) {
   const job = createJob({
     status: "ready",
     pdfPath: "data/pdfs/resume_job-1.pdf",
-    pdfFreshness: "stale",
+    resumeFreshness: "stale",
     ...overrides,
   });
 
@@ -49,20 +49,14 @@ function renderRightSidebar(overrides: Parameters<typeof createJob>[0] = {}) {
       isInProgress={job.status === "in_progress"}
       canLogEvents={false}
       isBusy={false}
-      isUploadingPdf={false}
       pdfActionsDisabled={false}
-      pdfRegeneratingReason={null}
-      pdfViewLabel="View old PDF"
       pdfDownloadLabel="Download old PDF"
       onStartTailoring={noop}
       onMarkApplied={noop}
       onMoveToInProgress={noop}
       onOpenLogEvent={noop}
       onEditTailoring={noop}
-      onViewPdf={noop}
       onDownloadPdf={noop}
-      onUploadPdf={noop}
-      onRegeneratePdf={noop}
       onSkip={noop}
       onOpenEditDetails={noop}
       onViewJobDescription={noop}
@@ -89,23 +83,20 @@ describe("JobPageRightSidebar actions", () => {
     expect(
       screen.getByRole("button", { name: /recalculate match/i }),
     ).toBeInTheDocument();
-    expect(
-      screen.getAllByRole("button", { name: /replace pdf/i }).length,
-    ).toBeGreaterThan(0);
-    expect(
-      screen.getAllByRole("button", { name: /view old pdf/i }).length,
-    ).toBeGreaterThan(0);
+    // PDF actions now live solely in the Documents panel; the sidebar keeps
+    // only Download as a quick shortcut when a resume PDF exists.
     expect(
       screen.getByRole("button", { name: /download old pdf/i }),
     ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /replace pdf/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /update pdf/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /open old pdf/i })).toBeNull();
   });
 
-  it("uses upload wording when the job has no resume PDF", () => {
-    renderRightSidebar({ pdfPath: null, pdfFreshness: "missing" });
+  it("hides the PDF download shortcut when the job has no resume PDF", () => {
+    renderRightSidebar({ pdfPath: null, resumeFreshness: "missing" });
 
-    expect(
-      screen.getAllByRole("button", { name: /upload pdf/i }).length,
-    ).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: /download pdf/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /download/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /upload pdf/i })).toBeNull();
   });
 });

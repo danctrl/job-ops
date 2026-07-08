@@ -160,9 +160,7 @@ describe("JobHeader", () => {
 
     renderWithRouter(<JobHeader job={jobWithTooltips} />);
 
-    expect(
-      screen.getByText("Found by the pipeline. Not tailored yet."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Saved. Not tailored yet.")).toBeInTheDocument();
     expect(
       screen.getByText(
         "Tracer links are turned off for this job, so click tracking will not be recorded.",

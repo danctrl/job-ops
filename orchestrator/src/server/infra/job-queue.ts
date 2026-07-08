@@ -5,6 +5,7 @@ export type JobQueueName = (typeof JOB_QUEUE_NAMES)[number];
 export type AutoPdfRegenerationReason =
   | "design_resume_updated"
   | "tailoring_updated"
+  | "cover_letter_updated"
   | "settings_changed"
   | "manual_refresh";
 

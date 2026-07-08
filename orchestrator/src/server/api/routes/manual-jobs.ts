@@ -11,11 +11,18 @@ import { logger } from "@infra/logger";
 import { processJob } from "@server/pipeline/index";
 import * as jobsRepo from "@server/repositories/jobs";
 import { getSetting } from "@server/repositories/settings";
-import { generateJobBrief } from "@server/services/job-brief";
+import {
+  extractJobPosting,
+  mergeStructuredIntoJob,
+} from "@server/services/job-brief";
 import { inferManualJobDetails } from "@server/services/manualJob";
 import { getProfile } from "@server/services/profile";
+import { classifyRoleFamilies } from "@server/services/role-family-classifier";
 import { scoreJobSuitability } from "@server/services/scorer";
 import { settingsRegistry } from "@shared/settings-registry";
+import type { JobStatus } from "@shared/types";
+import { normalizeContractType } from "@shared/utils/contract";
+import { parseSalary } from "@shared/utils/salary";
 import { type Request, type Response, Router } from "express";
 import { JSDOM } from "jsdom";
 import { z } from "zod";
@@ -298,6 +305,10 @@ manualJobsRouter.post("/import", async (req: Request, res: Response) => {
       }
     }
 
+    // Canonicalize contract + salary from the final (possibly user-edited)
+    // values so the persisted row is structured and clean, matching the search
+    // path — not left as raw text to be fixed up later by async extraction.
+    const parsedSalary = parseSalary(cleanOptional(job.salary));
     const createdJob = await jobsRepo.createJob({
       source,
       sourceJobId: sourceJobId ?? undefined,
@@ -306,10 +317,14 @@ manualJobsRouter.post("/import", async (req: Request, res: Response) => {
       jobUrl: job.jobUrl.trim(),
       applicationLink: cleanOptional(job.applicationLink) ?? undefined,
       location: cleanOptional(job.location) ?? undefined,
-      salary: cleanOptional(job.salary) ?? undefined,
+      salary: parsedSalary?.text ?? undefined,
+      salaryMinAmount: parsedSalary?.min ?? undefined,
+      salaryMaxAmount: parsedSalary?.max ?? undefined,
+      salaryCurrency: parsedSalary?.currency ?? undefined,
+      salaryInterval: parsedSalary?.period ?? undefined,
       deadline: cleanOptional(job.deadline) ?? undefined,
       jobDescription: job.jobDescription.trim(),
-      jobType: cleanOptional(job.jobType) ?? undefined,
+      jobType: normalizeContractType(cleanOptional(job.jobType)) ?? undefined,
       jobLevel: cleanOptional(job.jobLevel) ?? undefined,
       jobFunction: cleanOptional(job.jobFunction) ?? undefined,
       disciplines: cleanOptional(job.disciplines) ?? undefined,
@@ -317,40 +332,73 @@ manualJobsRouter.post("/import", async (req: Request, res: Response) => {
       starting: cleanOptional(job.starting) ?? undefined,
     });
 
-    const skipTailoring = await resolveSkipTailoring(input.skipTailoring);
-    if (skipTailoring) {
-      ok(res, createdJob);
-      return;
-    }
-
-    const processResult = await processJob(createdJob.id, {
-      analyticsOrigin: "manual_job_create",
-    });
-    if (!processResult.success) {
-      logger.warn("Manual job auto-processing failed", {
-        jobId: createdJob.id,
-        error: processResult.error ?? "Unknown error",
+    // Best-effort LLM role-family classification (never block the manual add).
+    try {
+      const families = await classifyRoleFamilies([
+        {
+          id: createdJob.id,
+          title: createdJob.title,
+          employer: createdJob.employer,
+        },
+      ]);
+      const family = families.get(createdJob.id);
+      if (family) {
+        createdJob.roleFamily = family;
+        await jobsRepo.updateJob(createdJob.id, { roleFamily: family });
+      }
+    } catch (error) {
+      logger.warn("Manual job role-family classification skipped", {
+        error: error instanceof Error ? error.message : String(error),
       });
-      return fail(
-        res,
-        new AppError({
-          status: 502,
-          code: "UPSTREAM_ERROR",
-          message:
-            processResult.error ||
-            "Imported job but failed to move it to ready automatically",
-          details: { jobId: createdJob.id },
-        }),
-      );
     }
 
-    const processedJob = await jobsRepo.getJobById(createdJob.id);
-    if (!processedJob) {
-      return fail(res, notFound("Job not found"));
+    const skipTailoring = await resolveSkipTailoring(input.skipTailoring);
+
+    // Tailoring (summarize + PDF generation) is the expensive, token-heavy step
+    // that "Import without tailoring" defers. Scoring and JD-brief extraction are
+    // cheap and always run so the job surfaces a real score and brief regardless
+    // — otherwise an unscored job renders as a misleading AI-error badge.
+    let baseJob = createdJob;
+    if (!skipTailoring) {
+      const processResult = await processJob(createdJob.id, {
+        analyticsOrigin: "manual_job_create",
+      });
+      if (!processResult.success) {
+        logger.warn("Manual job auto-processing failed", {
+          jobId: createdJob.id,
+          error: processResult.error ?? "Unknown error",
+        });
+        return fail(
+          res,
+          new AppError({
+            status: 502,
+            code: "UPSTREAM_ERROR",
+            message:
+              processResult.error ||
+              "Imported job but failed to move it to ready automatically",
+            details: { jobId: createdJob.id },
+          }),
+        );
+      }
+
+      const processedJob = await jobsRepo.getJobById(createdJob.id);
+      if (!processedJob) {
+        return fail(res, notFound("Job not found"));
+      }
+      baseJob = processedJob;
     }
 
-    const scoringJob = await jobsRepo.updateJob(processedJob.id, {
-      status: "processing",
+    // Tailored jobs land in Ready; import-without-tailoring lands in Saved
+    // (discovered). Both still get an async score + brief. Saved jobs keep the
+    // "discovered" status throughout (the score ring shows a loading state until
+    // the async scoring finishes).
+    const finalStatus: JobStatus = skipTailoring ? "discovered" : "ready";
+    const interimStatus: JobStatus = skipTailoring
+      ? "discovered"
+      : "processing";
+
+    const scoringJob = await jobsRepo.updateJob(baseJob.id, {
+      status: interimStatus,
     });
     if (!scoringJob) {
       return fail(res, notFound("Job not found"));
@@ -358,7 +406,8 @@ manualJobsRouter.post("/import", async (req: Request, res: Response) => {
 
     ok(res, scoringJob);
 
-    // Score asynchronously so the import returns immediately with a processing state.
+    // Score + extract asynchronously so the import returns immediately.
+    // Runs on both paths (tailored and import-without-tailoring).
     void (async () => {
       try {
         const rawProfile = await getProfile();
@@ -370,28 +419,44 @@ manualJobsRouter.post("/import", async (req: Request, res: Response) => {
           throw new Error("Invalid resume profile format");
         }
         const profile = rawProfile as Record<string, unknown>;
-        const [{ score, reason }, jobBrief] = await Promise.all([
-          scoreJobSuitability(processedJob, profile),
-          generateJobBrief(processedJob.jobDescription, {
-            jobId: processedJob.id,
+        // Decouple scoring from brief extraction: a scoring failure must not
+        // discard a brief that extraction produced (and vice versa). Scoring is
+        // caught to null; extractJobPosting already returns null on failure.
+        const [scoreResult, extraction] = await Promise.all([
+          scoreJobSuitability(baseJob, profile).catch((error) => {
+            logger.warn("Manual job scoring failed", {
+              jobId: baseJob.id,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
+          }),
+          extractJobPosting(baseJob.jobDescription, {
+            jobId: baseJob.id,
           }),
         ]);
-        await jobsRepo.updateJob(processedJob.id, {
-          status: "ready",
-          suitabilityScore: score,
-          suitabilityReason: reason,
-          jobBrief,
+        await jobsRepo.updateJob(baseJob.id, {
+          status: finalStatus,
+          ...(scoreResult
+            ? {
+                suitabilityScore: scoreResult.score,
+                suitabilityReason: scoreResult.reason,
+              }
+            : {}),
+          jobBrief: extraction?.jobBrief ?? null,
+          ...(extraction
+            ? mergeStructuredIntoJob(baseJob, extraction.structured)
+            : {}),
         });
       } catch (error) {
         logger.warn("Manual job scoring failed", {
-          jobId: processedJob.id,
+          jobId: baseJob.id,
           error,
         });
-        await jobsRepo.updateJob(processedJob.id, { status: "ready" });
+        await jobsRepo.updateJob(baseJob.id, { status: finalStatus });
       }
     })().catch((error) => {
       logger.warn("Manual job scoring task failed to start", {
-        jobId: processedJob.id,
+        jobId: baseJob.id,
         error,
       });
     });

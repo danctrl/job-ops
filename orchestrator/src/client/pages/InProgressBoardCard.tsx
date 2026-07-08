@@ -19,8 +19,6 @@ export type InProgressBoardCardProps = {
   jobPageLinkState: { jobPageBackTo: string };
   isMoving: boolean;
   cardClassName?: string;
-  onDragStart: (event: React.DragEvent<HTMLDivElement>) => void;
-  onDragEnd: () => void;
   onLogEvent: () => void;
 };
 
@@ -31,26 +29,20 @@ export const InProgressBoardCard: React.FC<InProgressBoardCardProps> = ({
   jobPageLinkState,
   isMoving,
   cardClassName,
-  onDragStart,
-  onDragEnd,
   onLogEvent,
 }) => {
   const canLogEvents = stage !== "closed";
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: full-card drag target for kanban lanes
     <div
-      draggable={!isMoving}
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
       className={cn(
-        "group rounded-lg border border-border/60 bg-background/95 p-3 shadow-[0_8px_20px_-18px_rgba(0,0,0,1)] transition-colors",
+        "group rounded-lg border border-border/60 bg-background/95 p-2.5 shadow-[0_8px_20px_-18px_rgba(0,0,0,1)] transition-colors",
         "hover:border-border hover:bg-background hover:shadow-[0_12px_24px_-16px_rgba(0,0,0,1)]",
         cardClassName,
         isMoving && "opacity-70",
       )}
     >
-      <div className="mb-2 flex items-start gap-2">
+      <div className="mb-1.5 flex items-start gap-2">
         <Link
           to={`/job/${job.id}`}
           state={jobPageLinkState}
@@ -124,7 +116,7 @@ export const InProgressBoardCard: React.FC<InProgressBoardCardProps> = ({
             ) : null}
           </div>
         )}
-        <div className="mt-2 text-[11px] text-muted-foreground/70">
+        <div className="mt-1.5 text-[11px] text-muted-foreground/70">
           {latestEventAt != null
             ? `Updated ${formatTimestamp(latestEventAt)}`
             : "No stage events yet"}

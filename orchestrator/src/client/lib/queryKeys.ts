@@ -7,8 +7,14 @@ export const queryKeys = {
   },
   designResume: {
     all: ["design-resume"] as const,
-    current: () => [...queryKeys.designResume.all, "current"] as const,
+    current: (language?: string) =>
+      [
+        ...queryKeys.designResume.all,
+        "current",
+        language ?? "primary",
+      ] as const,
     status: () => [...queryKeys.designResume.all, "status"] as const,
+    masters: () => [...queryKeys.designResume.all, "masters"] as const,
   },
   settings: {
     all: ["settings"] as const,

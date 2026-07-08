@@ -29,6 +29,7 @@ import {
 import { toast } from "sonner";
 import { JobBriefPane } from "@/client/components/JobBriefPane";
 import { JobDescriptionPanel } from "@/client/components/JobDescriptionPanel";
+import { JobStatusPills } from "@/client/components/JobStatusPills";
 import { invalidateJobData } from "@/client/hooks/queries/invalidate";
 import {
   useCheckSponsorMutation,
@@ -46,7 +47,10 @@ import { showErrorToast } from "@/client/lib/error-toast";
 import { uploadJobPdfFromFile } from "@/client/lib/job-pdf-upload";
 import { getRenderableJobDescription } from "@/client/lib/jobDescription";
 import { logJobStageEvent } from "@/client/lib/logJobStageEvent";
-import { resolveFilenameLanguage } from "@/client/lib/pdf-filename";
+import {
+  buildPdfFilenames,
+  resolveFilenameLanguage,
+} from "@/client/lib/pdf-filename";
 import {
   getPdfActionLabels,
   isPdfRegenerating,
@@ -54,7 +58,11 @@ import {
   PDF_REGENERATING_MESSAGE,
   STALE_PDF_MESSAGE,
 } from "@/client/lib/pdf-freshness";
-import { downloadJobPdf, openJobPdf } from "@/client/lib/private-pdf";
+import {
+  downloadJobCoverLetter,
+  downloadJobPdf,
+  openJobPdf,
+} from "@/client/lib/private-pdf";
 import { queryKeys } from "@/client/lib/queryKeys";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -64,7 +72,6 @@ import {
   formatJobForWebhook,
   formatJobSourceLabel,
   formatTimestamp,
-  safeFilenamePart,
   sourceLabel as sourceLabels,
 } from "@/lib/utils";
 import * as api from "../api";
@@ -86,6 +93,7 @@ import {
 } from "./job-page/JobPageLeftSidebar";
 import { JobPageRightSidebar } from "./job-page/JobPageRightSidebar";
 import { OverviewGhostwriterComposer } from "./job-page/OverviewGhostwriterComposer";
+import { defaultStatusToken, statusTokens } from "./orchestrator/constants";
 
 const normalizeMemoryView = (view: string | undefined): JobMemoryView => {
   if (view === "notes" || view === "note") return "note";
@@ -110,16 +118,19 @@ const isValidJobPageBackTarget = (value: unknown): value is string =>
   !value.startsWith("/job/");
 
 const getFallbackBackTarget = (job: Job | null): string => {
-  if (job?.status === "ready" || job?.status === "discovered") {
-    return `/jobs/${job.status}`;
+  if (!job) return "/jobs/all";
+  // Include the job id so the orchestrator list re-selects this job instead of
+  // defaulting to the first entry (route: /jobs/:tab/:jobId).
+  if (job.status === "ready" || job.status === "discovered") {
+    return `/jobs/${job.status}/${job.id}`;
   }
-  if (job?.status === "applied") {
-    return "/jobs/applied";
+  if (job.status === "applied") {
+    return `/jobs/applied/${job.id}`;
   }
-  if (job?.status === "in_progress") {
+  if (job.status === "in_progress") {
     return "/applications/in-progress";
   }
-  return "/jobs/all";
+  return `/jobs/all/${job.id}`;
 };
 
 const sortNotesByUpdatedAtDesc = (notes: JobNote[]) =>
@@ -153,7 +164,7 @@ export const JobPage: React.FC = () => {
   const pendingEventRef = React.useRef<StageEvent | null>(null);
   const uploadPdfInputRef = React.useRef<HTMLInputElement | null>(null);
   const { settings } = useSettings();
-  const { profile } = useProfile();
+  const { personName, profile } = useProfile();
   const filenameLanguage = resolveFilenameLanguage({ settings, profile });
   const openEditDetails = React.useCallback(() => {
     window.setTimeout(() => setIsEditDetailsOpen(true), 0);
@@ -163,6 +174,19 @@ export const JobPage: React.FC = () => {
     queryKey: ["jobs", "detail", id ?? null] as const,
     queryFn: () => (id ? api.getJob(id) : Promise.resolve(null)),
     enabled: Boolean(id),
+    // The PDF rebuilds automatically after tailoring/CV/settings edits. Poll
+    // while it's stale or regenerating so the freshness pill and preview
+    // advance stale → regenerating → up-to-date without a manual refresh, and
+    // refetch on focus so returning from the Resume Studio picks up the change.
+    refetchInterval: (query) => {
+      const data = query.state.data ?? undefined;
+      // Poll fast while the PDF is actively rebuilding so the spinner clears
+      // promptly once the server finishes (bounded, short window).
+      if (isPdfRegenerating(data)) return 800;
+      if (isPdfStale(data)) return 2500;
+      return false;
+    },
+    refetchOnWindowFocus: true,
   });
   const eventsQuery = useQuery<StageEvent[]>({
     queryKey: ["jobs", "stage-events", id ?? null] as const,
@@ -453,9 +477,7 @@ export const JobPage: React.FC = () => {
       setIsUploadingPdf(true);
       await uploadJobPdfFromFile(job.id, file);
       await loadData();
-      toast.success(
-        job.pdfPath ? "Resume PDF replaced" : "Resume PDF attached",
-      );
+      toast.success("Resume uploaded");
     } catch (error) {
       showErrorToast(error, "Failed to upload resume PDF");
     } finally {
@@ -466,16 +488,45 @@ export const JobPage: React.FC = () => {
     }
   };
 
-  const handleDownloadPdf = async () => {
+  // Resume only — used by the Resume section's Download button so it never
+  // pulls the cover letter along with it.
+  const handleDownloadResume = async () => {
     if (!job || !job.pdfPath || pdfActionsDisabled) return;
-    const filename = `${safeFilenamePart(job.employer, {
+    const filenames = buildPdfFilenames({
+      personName,
+      employer: job.employer,
       language: filenameLanguage,
-    })}-${safeFilenamePart(job.title, {
-      language: filenameLanguage,
-    })}-resume.pdf`;
-    await downloadJobPdf(job.id, filename).catch((error) => {
-      showErrorToast(error, "Could not download PDF");
     });
+    try {
+      await downloadJobPdf(job.id, filenames.resume);
+    } catch (error) {
+      showErrorToast(error, "Could not download resume PDF");
+    }
+  };
+
+  const handleDownloadPdf = async () => {
+    if (!job) return;
+    const filenames = buildPdfFilenames({
+      personName,
+      employer: job.employer,
+      language: filenameLanguage,
+    });
+    // Sequential: two anchor clicks in the same tick get collapsed into one
+    // download by most browsers, so a single click would only save one file.
+    if (job.pdfPath && !pdfActionsDisabled) {
+      try {
+        await downloadJobPdf(job.id, filenames.resume);
+      } catch (error) {
+        showErrorToast(error, "Could not download resume PDF");
+      }
+    }
+    if (job.coverLetterPath) {
+      try {
+        await downloadJobCoverLetter(job.id, filenames.coverLetter);
+      } catch (error) {
+        showErrorToast(error, "Could not download cover letter PDF");
+      }
+    }
   };
 
   const handleViewJobDescription = () => {
@@ -543,16 +594,22 @@ export const JobPage: React.FC = () => {
           <ArrowLeft className="h-4 w-4" />
           Back
         </Button>
-        {job && (
-          <Badge
-            variant="outline"
-            className="border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
-          >
-            {currentStage
-              ? STAGE_LABELS[currentStage as ApplicationStage] || currentStage
-              : job.status}
-          </Badge>
-        )}
+        {job &&
+          (() => {
+            // Color the status badge from the shared status token map so it
+            // matches the pill row (Saved=blue, Ready=yellow, applied/in-progress/
+            // processing=green, skipped=red, expired=grey). Application-stage
+            // labels (applied+) stay on the applied/in-progress green.
+            const token = statusTokens[job.status] ?? defaultStatusToken;
+            return (
+              <Badge variant="outline" className={token.badge}>
+                {currentStage
+                  ? STAGE_LABELS[currentStage as ApplicationStage] ||
+                    currentStage
+                  : token.label}
+              </Badge>
+            );
+          })()}
       </div>
 
       {!job && (
@@ -581,6 +638,8 @@ export const JobPage: React.FC = () => {
                   hasNotes={notes.length > 0}
                   navigationState={jobPageNavigationState}
                 />
+
+                <JobStatusPills job={job} />
 
                 <JobBriefPane job={job} />
 
@@ -767,8 +826,6 @@ export const JobPage: React.FC = () => {
                   isUploadingPdf={isUploadingPdf}
                   pdfActionsDisabled={pdfActionsDisabled}
                   pdfRegeneratingReason={pdfRegeneratingReason}
-                  pdfViewLabel={pdfLabels.view}
-                  pdfDownloadLabel={pdfLabels.download}
                   stalePdfMessage={STALE_PDF_MESSAGE}
                   onUploadPdf={() => uploadPdfInputRef.current?.click()}
                   onViewPdf={() => {
@@ -781,8 +838,23 @@ export const JobPage: React.FC = () => {
                       );
                     });
                   }}
-                  onDownloadPdf={() => void handleDownloadPdf()}
-                  onRegeneratePdf={() => void handleRegeneratePdf()}
+                  onDownloadPdf={() => void handleDownloadResume()}
+                  onDownloadCoverLetter={() =>
+                    void downloadJobCoverLetter(
+                      job.id,
+                      buildPdfFilenames({
+                        personName,
+                        employer: job.employer,
+                        language: filenameLanguage,
+                      }).coverLetter,
+                    ).catch((error) =>
+                      showErrorToast(
+                        error,
+                        "Could not download cover letter PDF",
+                      ),
+                    )
+                  }
+                  onRegeneratePdf={handleRegeneratePdf}
                 />
 
                 <JobBriefPane job={job} />
@@ -888,29 +960,18 @@ export const JobPage: React.FC = () => {
               isInProgress={Boolean(isInProgress)}
               canLogEvents={canLogEvents}
               isBusy={isBusy}
-              isUploadingPdf={isUploadingPdf}
               pdfActionsDisabled={pdfActionsDisabled}
-              pdfRegeneratingReason={pdfRegeneratingReason}
-              pdfViewLabel={pdfLabels.view}
               pdfDownloadLabel={pdfLabels.download}
-              onStartTailoring={() => navigate(`/jobs/discovered/${job.id}`)}
+              onStartTailoring={() =>
+                navigate(`/jobs/discovered/${job.id}?inspector=tailoring`)
+              }
               onMarkApplied={() => void handleMarkApplied()}
               onMoveToInProgress={() => void handleMoveToInProgress()}
               onOpenLogEvent={() => setIsLogModalOpen(true)}
-              onEditTailoring={() => navigate(`/jobs/ready/${job.id}`)}
-              onViewPdf={() => {
-                if (pdfActionsDisabled) return;
-                void openJobPdf(job.id).catch((error) => {
-                  toast.error(
-                    error instanceof Error
-                      ? error.message
-                      : "Could not open PDF",
-                  );
-                });
-              }}
+              onEditTailoring={() =>
+                navigate(`/jobs/ready/${job.id}?inspector=tailoring`)
+              }
               onDownloadPdf={() => void handleDownloadPdf()}
-              onUploadPdf={() => uploadPdfInputRef.current?.click()}
-              onRegeneratePdf={() => void handleRegeneratePdf()}
               onSkip={() => void handleSkip()}
               onOpenEditDetails={openEditDetails}
               onViewJobDescription={handleViewJobDescription}

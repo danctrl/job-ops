@@ -60,6 +60,7 @@ const renderHeader = (
     onOpenAutomaticRun: vi.fn(),
     onCancelPipeline: vi.fn(),
     onOpenManualImport: vi.fn(),
+    onOpenShortcuts: vi.fn(),
     ...overrides,
   };
 

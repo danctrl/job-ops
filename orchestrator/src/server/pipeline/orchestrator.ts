@@ -14,11 +14,13 @@ import { trackServerProductEvent } from "@infra/product-analytics";
 import { runWithRequestContext } from "@infra/request-context";
 import { getPrivateDataScope } from "@server/tenancy/private-scope";
 import { createLocationIntentFromLegacyInputs } from "@shared/location-domain.js";
+import { settingsRegistry } from "@shared/settings-registry";
 import type {
   JobStatus,
   PipelineConfig,
   PipelineRunSavedDetails,
 } from "@shared/types";
+import { normalizeJobTitle } from "@shared/utils/string";
 import { getDataDir } from "../config/dataDir";
 import * as jobsRepo from "../repositories/jobs";
 import * as pipelineRepo from "../repositories/pipeline";
@@ -28,6 +30,7 @@ import {
   reserveHostedUsage,
   settleHostedUsageReservation,
 } from "../services/hosted-usage";
+import { generateJobBrief, parseStoredJobBrief } from "../services/job-brief";
 import { generatePdf } from "../services/pdf";
 import {
   createJobPdfFingerprint,
@@ -53,6 +56,7 @@ import {
 } from "./run-details";
 import {
   discoverJobsStep,
+  enrichRoleFamiliesStep,
   importJobsStep,
   loadProfileStep,
   notifyPipelineWebhookStep,
@@ -61,8 +65,11 @@ import {
   selectJobsStep,
 } from "./steps";
 
+const DEFAULT_MAX_JOBS_TO_SCORE = 60;
+
 const DEFAULT_CONFIG: PipelineConfig = {
   topN: 10,
+  maxJobsToScore: DEFAULT_MAX_JOBS_TO_SCORE,
   minSuitabilityScore: 50,
   // Keep Glassdoor opt-in via source picker/settings; do not enable by default.
   sources: ["gradcracker", "indeed", "linkedin", "ukvisajobs"],
@@ -438,6 +445,11 @@ export async function runPipeline(
         ({ unprocessedJobs, scoredJobs } = await scoreJobsStep({
           profile,
           scoringInstructions: mergedConfig.scoringInstructions,
+          // Cost ceiling, never below topN (else selection can't fill topN).
+          maxJobsToScore: Math.max(
+            mergedConfig.maxJobsToScore ?? DEFAULT_MAX_JOBS_TO_SCORE,
+            mergedConfig.topN,
+          ),
           shouldCancel: () =>
             getPipelineState(scopeKey).cancelRequestedAt !== null,
         }));
@@ -459,6 +471,10 @@ export async function runPipeline(
           ({ unprocessedJobs, scoredJobs } = await scoreJobsStep({
             profile,
             scoringInstructions: mergedConfig.scoringInstructions,
+            maxJobsToScore: Math.max(
+              mergedConfig.maxJobsToScore ?? DEFAULT_MAX_JOBS_TO_SCORE,
+              mergedConfig.topN,
+            ),
             shouldCancel: () =>
               getPipelineState(scopeKey).cancelRequestedAt !== null,
           }));
@@ -469,6 +485,13 @@ export async function runPipeline(
       await persistResultSummary({
         stage: "scoring",
         jobsScored: scoredJobs.length,
+      });
+
+      ensureNotCancelled(scopeKey);
+      await enrichRoleFamiliesStep({
+        jobs: scoredJobs,
+        shouldCancel: () =>
+          getPipelineState(scopeKey).cancelRequestedAt !== null,
       });
 
       ensureNotCancelled(scopeKey);
@@ -492,12 +515,24 @@ export async function runPipeline(
         jobsScored: scoredJobs.length,
         jobsSelected: jobsToProcess.length,
       });
-      const { processedCount } = await processJobsStep({
-        jobsToProcess,
-        processJob,
-        shouldCancel: () =>
-          getPipelineState(scopeKey).cancelRequestedAt !== null,
-      });
+      // Auto-generating materials for top-scored jobs is opt-in. When disabled
+      // (default), scored jobs stay in Saved and the user builds PDFs by hand
+      // to save LLM tokens and pre-filter before tailoring.
+      const autoGenerateRaw = await settingsRepo.getSetting(
+        "autoGenerateMaterialsForTopJobs",
+      );
+      const autoGenerateMaterials =
+        settingsRegistry.autoGenerateMaterialsForTopJobs.parse(
+          autoGenerateRaw ?? undefined,
+        ) ?? settingsRegistry.autoGenerateMaterialsForTopJobs.default();
+      const { processedCount } = autoGenerateMaterials
+        ? await processJobsStep({
+            jobsToProcess,
+            processJob,
+            shouldCancel: () =>
+              getPipelineState(scopeKey).cancelRequestedAt !== null,
+          })
+        : { processedCount: 0 };
       jobsProcessed = processedCount;
 
       resultSummary = updatePipelineRunResultSummary(resultSummary, {
@@ -535,7 +570,14 @@ export async function runPipeline(
         jobsProcessed: processedCount,
       };
     } catch (error) {
-      if (error instanceof PipelineCancelledError) {
+      // If the user requested cancellation, any error that surfaced during
+      // teardown (e.g. an in-flight scoring/LLM call rejecting) is a consequence
+      // of the cancel — classify the run as cancelled, not failed, so Cancel
+      // never shows an error toast.
+      if (
+        error instanceof PipelineCancelledError ||
+        getPipelineState(scopeKey).cancelRequestedAt
+      ) {
         const message = "Cancelled by user request";
         await pipelineRepo.updatePipelineRun(pipelineRun.id, {
           status: "cancelled",
@@ -653,6 +695,8 @@ export async function summarizeJob(
       let tailoredSummary = job.tailoredSummary;
       let tailoredHeadline = job.tailoredHeadline;
       let tailoredSkills = job.tailoredSkills;
+      let tailoredExperience = job.tailoredExperience;
+      let coverageScore = job.coverageScore;
       const requestedFields = options?.fields;
       const shouldUpdateAllTailoring = !requestedFields?.length;
       const shouldUpdateSummary =
@@ -670,9 +714,40 @@ export async function summarizeJob(
       ) {
         jobLogger.info("Generating tailoring content");
         await reserveTailoringUsage();
+        const resumeSkillsRaw = await settingsRepo.getSetting("resumeSkills");
+        const resumeSkills =
+          settingsRegistry.resumeSkills.parse(resumeSkillsRaw ?? undefined) ??
+          settingsRegistry.resumeSkills.default();
+        const tailoringFeaturesRaw =
+          await settingsRepo.getSetting("tailoringFeatures");
+        const tailoringFeatures =
+          settingsRegistry.tailoringFeatures.parse(
+            tailoringFeaturesRaw ?? undefined,
+          ) ?? settingsRegistry.tailoringFeatures.default();
+        // Ensure a job brief exists so the ATS coverage score is produced for
+        // every tailored job, regardless of ingestion path (search vs manual
+        // import). Best-effort: tailoring still proceeds if this fails.
+        let ensuredBriefRaw = job.jobBrief;
+        if (!ensuredBriefRaw && job.jobDescription) {
+          try {
+            ensuredBriefRaw = await generateJobBrief(job.jobDescription, {
+              jobId: job.id,
+            });
+            if (ensuredBriefRaw) {
+              await jobsRepo.updateJob(job.id, { jobBrief: ensuredBriefRaw });
+            }
+          } catch (error) {
+            jobLogger.warn("Failed to ensure job brief before tailoring", {
+              error,
+            });
+          }
+        }
         const tailoringResult = await generateTailoring(
           job.jobDescription || "",
           profile,
+          parseStoredJobBrief(ensuredBriefRaw),
+          resumeSkills,
+          tailoringFeatures,
         );
         if (tailoringResult.success && tailoringResult.data) {
           tailoringUsageSucceeded = true;
@@ -680,11 +755,18 @@ export async function summarizeJob(
             tailoredSummary = tailoringResult.data.summary;
           }
           if (shouldUpdateHeadline) {
-            tailoredHeadline = tailoringResult.data.headline;
+            // The AI headline echoes the JD title verbatim; normalize it the
+            // same way job.title is so the resume PDF shows the clean role, not
+            // the long raw variant (gender tags, seniority, contract, tail).
+            tailoredHeadline = normalizeJobTitle(tailoringResult.data.headline);
           }
           if (shouldUpdateSkills) {
             tailoredSkills = JSON.stringify(tailoringResult.data.skills);
           }
+          tailoredExperience = tailoringResult.data.experience
+            ? JSON.stringify(tailoringResult.data.experience)
+            : null;
+          coverageScore = tailoringResult.data.coverageScore;
         } else if (
           options?.force ||
           (shouldUpdateSummary && !tailoredSummary) ||
@@ -769,6 +851,8 @@ export async function summarizeJob(
         ...(shouldUpdateSkills
           ? { tailoredSkills: tailoredSkills ?? undefined }
           : {}),
+        coverageScore: coverageScore ?? null,
+        tailoredExperience: tailoredExperience ?? undefined,
         ...(shouldUpdateAllTailoring
           ? { selectedProjectIds: selectedProjectIds ?? undefined }
           : {}),
@@ -835,8 +919,13 @@ export async function generateFinalPdf(
       jobStatusToRestore = job.status;
       await reservePdfUsage();
 
-      // Ready jobs already have a usable PDF; keep them visible while regenerating.
-      if (job.status !== "ready") {
+      // Ready jobs already have a usable PDF; discovered (Saved) jobs stay
+      // visible in their column while building and are only promoted to Ready
+      // once the PDF commits. Both just flag regeneration here rather than
+      // flicking through the transient "processing" status used by other states.
+      const keepsStatusDuringBuild =
+        job.status === "ready" || job.status === "discovered";
+      if (!keepsStatusDuringBuild) {
         await jobsRepo.updateJob(job.id, {
           status: "processing",
           pdfRegenerating: true,
@@ -850,8 +939,13 @@ export async function generateFinalPdf(
         job.id,
         {
           summary: job.tailoredSummary || "",
-          headline: job.tailoredHeadline || "",
+          // The CV headline is the role for THIS job: the tailored headline, or
+          // the cleaned job title, before falling back to the base résumé
+          // headline. Keeps it per-entry instead of a generic static title.
+          headline:
+            job.tailoredHeadline?.trim() || normalizeJobTitle(job.title) || "",
           skills: job.tailoredSkills ? JSON.parse(job.tailoredSkills) : [],
+          experience: job.tailoredExperience,
         },
         job.jobDescription || "",
         undefined, // deprecated baseResumePath parameter
@@ -888,8 +982,9 @@ export async function generateFinalPdf(
 
       const fingerprintContext = await resolvePdfFingerprintContext();
       const pdfFingerprint = createJobPdfFingerprint(job, fingerprintContext);
-      const expectedStatusAtCommit: JobStatus =
-        job.status === "ready" ? "ready" : "processing";
+      const expectedStatusAtCommit: JobStatus = keepsStatusDuringBuild
+        ? job.status
+        : "processing";
 
       const updatedJob = await jobsRepo.finalizeGeneratedPdfIfCurrent({
         id: job.id,
@@ -929,7 +1024,9 @@ export async function generateFinalPdf(
           theme:
             fingerprintContext.pdfRenderer === "typst"
               ? fingerprintContext.typstTheme
-              : null,
+              : fingerprintContext.pdfRenderer === "latex"
+                ? fingerprintContext.latexTheme
+                : null,
           tracer_links_enabled: job.tracerLinksEnabled,
           has_tailored_summary: Boolean(job.tailoredSummary),
           has_tailored_skills: Boolean(job.tailoredSkills),

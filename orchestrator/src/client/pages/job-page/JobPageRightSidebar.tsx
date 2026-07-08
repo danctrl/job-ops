@@ -6,16 +6,13 @@ import {
   Download,
   Edit2,
   ExternalLink,
-  FileText,
   MoreHorizontal,
   PlusCircle,
   RefreshCcw,
   Sparkles,
-  Upload,
   XCircle,
 } from "lucide-react";
 import type React from "react";
-import { TooltipWhenDisabled } from "@/client/components/TooltipWhenDisabled";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,20 +34,14 @@ type JobPageRightSidebarProps = {
   isInProgress: boolean;
   canLogEvents: boolean;
   isBusy: boolean;
-  isUploadingPdf: boolean;
   pdfActionsDisabled: boolean;
-  pdfRegeneratingReason: string | null;
-  pdfViewLabel: string;
   pdfDownloadLabel: string;
   onStartTailoring: () => void;
   onMarkApplied: () => void;
   onMoveToInProgress: () => void;
   onOpenLogEvent: () => void;
   onEditTailoring: () => void;
-  onViewPdf: () => void;
   onDownloadPdf: () => void;
-  onUploadPdf: () => void;
-  onRegeneratePdf: () => void;
   onSkip: () => void;
   onOpenEditDetails: () => void;
   onViewJobDescription: () => void;
@@ -69,20 +60,14 @@ export const JobPageRightSidebar: React.FC<JobPageRightSidebarProps> = ({
   isInProgress,
   canLogEvents,
   isBusy,
-  isUploadingPdf,
   pdfActionsDisabled,
-  pdfRegeneratingReason,
-  pdfViewLabel,
   pdfDownloadLabel,
   onStartTailoring,
   onMarkApplied,
   onMoveToInProgress,
   onOpenLogEvent,
   onEditTailoring,
-  onViewPdf,
   onDownloadPdf,
-  onUploadPdf,
-  onRegeneratePdf,
   onSkip,
   onOpenEditDetails,
   onViewJobDescription,
@@ -175,49 +160,16 @@ export const JobPageRightSidebar: React.FC<JobPageRightSidebarProps> = ({
           </Button>
         )}
 
-        {job.pdfPath && (
-          <TooltipWhenDisabled
-            reason={pdfRegeneratingReason}
-            className="w-full"
-          >
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-9 w-full justify-start"
-              onClick={onViewPdf}
-              disabled={pdfActionsDisabled}
-            >
-              <FileText className="mr-1.5 h-3.5 w-3.5" />
-              {pdfViewLabel}
-            </Button>
-          </TooltipWhenDisabled>
-        )}
-
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-9 w-full justify-start"
-          onClick={onUploadPdf}
-          disabled={isUploadingPdf}
-        >
-          <Upload className="mr-1.5 h-3.5 w-3.5" />
-          {isUploadingPdf
-            ? "Uploading PDF"
-            : job.pdfPath
-              ? "Replace PDF"
-              : "Upload PDF"}
-        </Button>
-
-        {isReady && (
+        {(job.pdfPath || job.coverLetterPath) && (
           <Button
             size="sm"
             variant="outline"
             className="h-9 w-full justify-start"
-            onClick={onRegeneratePdf}
-            disabled={isBusy || Boolean(pdfRegeneratingReason)}
+            onClick={onDownloadPdf}
+            disabled={pdfActionsDisabled && !job.coverLetterPath}
           >
-            <RefreshCcw className="mr-1.5 h-3.5 w-3.5" />
-            Regenerate PDF
+            <Download className="mr-1.5 h-3.5 w-3.5" />
+            {pdfDownloadLabel}
           </Button>
         )}
 
@@ -265,33 +217,6 @@ export const JobPageRightSidebar: React.FC<JobPageRightSidebarProps> = ({
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={onUploadPdf} disabled={isUploadingPdf}>
-              <Upload className="mr-2 h-4 w-4" />
-              {isUploadingPdf
-                ? "Uploading PDF..."
-                : job.pdfPath
-                  ? "Replace PDF"
-                  : "Upload PDF"}
-            </DropdownMenuItem>
-            {job.pdfPath && (
-              <>
-                <DropdownMenuItem
-                  onSelect={onViewPdf}
-                  disabled={pdfActionsDisabled}
-                >
-                  <ExternalLink className="mr-2 h-4 w-4" />
-                  {pdfViewLabel}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  onSelect={onDownloadPdf}
-                  disabled={pdfActionsDisabled}
-                >
-                  <Download className="mr-2 h-4 w-4" />
-                  {pdfDownloadLabel}
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-              </>
-            )}
             <DropdownMenuItem onSelect={onCheckSponsor}>
               Check sponsorship status
             </DropdownMenuItem>

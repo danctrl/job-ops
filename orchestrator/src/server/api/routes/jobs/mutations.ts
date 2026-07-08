@@ -6,10 +6,15 @@ import * as jobsRepo from "@server/repositories/jobs";
 import { reconcileActivationMilestonesFromHistorySafely } from "@server/services/activation-funnel";
 import { trackApplicationAcceptedIfNeeded } from "@server/services/jobs/analytics";
 import { getTracerReadiness } from "@server/services/tracer-links";
+import {
+  isJobMetadataLocked,
+  LOCKED_JOB_METADATA_FIELDS,
+} from "@shared/types/jobs";
 import { type Request, type Response, Router } from "express";
 import {
   hydrateJobPdfFreshness,
   isJobUrlConflictError,
+  queueCoverLetterAutoPdfRegenerationIfNeeded,
   queueTailoringAutoPdfRegenerationIfNeeded,
   toJobsRouteError,
   updateJobSchema,
@@ -36,6 +41,23 @@ jobsMutationsRouter.patch("/:id", async (req: Request, res: Response) => {
       });
       fail(res, err);
       return;
+    }
+
+    // Freeze posting metadata once the application is out (applied / in
+    // progress) — status, outcome and tailored-content edits are still allowed.
+    if (isJobMetadataLocked(currentJob.status)) {
+      const lockedEdits = LOCKED_JOB_METADATA_FIELDS.filter((field) =>
+        Object.hasOwn(input, field),
+      );
+      if (lockedEdits.length > 0) {
+        throw new AppError({
+          status: 409,
+          code: "CONFLICT",
+          message:
+            "Job details are locked once you've applied and can no longer be edited.",
+          details: { lockedFields: lockedEdits, status: currentJob.status },
+        });
+      }
     }
 
     const isTurningTracerLinksOn =
@@ -97,6 +119,11 @@ jobsMutationsRouter.patch("/:id", async (req: Request, res: Response) => {
     });
     ok(res, await hydrateJobPdfFreshness(job));
     queueTailoringAutoPdfRegenerationIfNeeded(
+      currentJob,
+      job,
+      "PATCH /api/jobs/:id",
+    );
+    queueCoverLetterAutoPdfRegenerationIfNeeded(
       currentJob,
       job,
       "PATCH /api/jobs/:id",

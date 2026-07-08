@@ -32,6 +32,19 @@ const stageIcons: Record<ApplicationStage, React.ReactNode> = {
   closed: <ClipboardList className="h-4 w-4" />,
 };
 
+// Human-readable labels for the raw metadata.reasonCode pill. Unmapped codes
+// fall back to a sentence-cased, de-underscored form (e.g. "rejected" ->
+// "Rejected").
+const REASON_CODE_LABELS: Record<string, string> = {
+  in_progress_board_drag: "Moved on board",
+  in_progress_board_menu: "Changed via menu",
+  job_page_manual_stage: "Manual update",
+};
+
+const formatReasonCode = (code: string): string =>
+  REASON_CODE_LABELS[code] ??
+  code.replace(/_/g, " ").replace(/^./, (char) => char.toUpperCase());
+
 const formatRange = (start: number, end: number) => {
   const startLabel = formatTimestamp(start);
   const endLabel = formatTimestamp(end);
@@ -183,9 +196,9 @@ export const JobTimeline: React.FC<JobTimelineProps> = ({
               {reason && (
                 <Badge
                   variant="outline"
-                  className="mt-2 text-[10px] uppercase tracking-wide"
+                  className="mt-2 text-[10px] tracking-wide"
                 >
-                  {reason}
+                  {formatReasonCode(reason)}
                 </Badge>
               )}
             </TimelineRow>

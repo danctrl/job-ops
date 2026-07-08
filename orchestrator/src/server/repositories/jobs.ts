@@ -3,8 +3,10 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { logger } from "@infra/logger";
 import { buildLocationEvidence } from "@shared/location-domain.js";
 import type {
+  CoverLetterDetails,
   CreateJobInput,
   CreateJobNoteInput,
   Job,
@@ -22,6 +24,17 @@ import type {
   LocationEvidence,
   LocationEvidenceEntry,
 } from "@shared/types/location";
+import { normalizePostedDate } from "@shared/utils/date";
+import {
+  extractJobLevel,
+  normalizeEmployer,
+  normalizeJobTitle,
+  normalizeSalary,
+} from "@shared/utils/string";
+import {
+  normalizeWorkplaceType,
+  stripWorkplaceFromLocation,
+} from "@shared/utils/workplace";
 import {
   and,
   desc,
@@ -31,9 +44,14 @@ import {
   isNull,
   lt,
   ne,
+  or,
   sql,
 } from "drizzle-orm";
 import { db, schema } from "../db/index";
+import {
+  normalizeJobDescription,
+  validateJobInput,
+} from "../services/job-normalization";
 import {
   getPrivateDataScope,
   privateDataScopeFilter,
@@ -105,6 +123,28 @@ function serializeLocationEvidence(
   return JSON.stringify(buildLocationEvidence(evidence));
 }
 
+function parseCoverLetterDetails(
+  raw: string | null | undefined,
+): CoverLetterDetails | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as CoverLetterDetails;
+  } catch {
+    return null;
+  }
+}
+
+function serializeCoverLetterDetails(
+  details: CoverLetterDetails | null | undefined,
+): string | null {
+  if (!details) return null;
+  return JSON.stringify(details);
+}
+
 /**
  * Get all jobs, optionally filtered by status.
  */
@@ -162,6 +202,7 @@ export async function getJobListItems(
     tracerLinksEnabled: jobs.tracerLinksEnabled,
     jobType: jobs.jobType,
     jobFunction: jobs.jobFunction,
+    roleFamily: jobs.roleFamily,
     salaryMinAmount: jobs.salaryMinAmount,
     salaryMaxAmount: jobs.salaryMaxAmount,
     salaryCurrency: jobs.salaryCurrency,
@@ -192,7 +233,7 @@ export async function getJobListItems(
       status: row.status as JobStatus,
       pdfSource: row.pdfSource as JobPdfSource | null,
       pdfRegenerating: row.pdfRegenerating ?? false,
-      pdfFreshness: row.pdfRegenerating
+      resumeFreshness: row.pdfRegenerating
         ? "regenerating"
         : row.pdfSource === "uploaded"
           ? "uploaded"
@@ -471,6 +512,17 @@ async function insertJob(input: CreateJobInput): Promise<Job> {
   const id = randomUUID();
   const now = new Date().toISOString();
   const scope = getPrivateDataScope();
+  const normalizedTitle = normalizeJobTitle(input.title);
+  const normalizedEmployer = normalizeEmployer(input.employer);
+  const { location: cleanLocation, workplaceType: locationWorkplace } =
+    stripWorkplaceFromLocation(input.location ?? null);
+  // Collapse every workplace signal (location suffix, source field, isRemote
+  // flag) into one canonical type; the location keeps only the place.
+  const workplaceType = normalizeWorkplaceType([
+    locationWorkplace,
+    input.workFromHomeType ?? null,
+    input.isRemote === true ? "remote" : null,
+  ]);
 
   await db.insert(jobs).values({
     id,
@@ -479,28 +531,35 @@ async function insertJob(input: CreateJobInput): Promise<Job> {
     source: input.source,
     sourceJobId: input.sourceJobId ?? null,
     jobUrlDirect: input.jobUrlDirect ?? null,
-    datePosted: input.datePosted ?? null,
-    title: input.title,
-    employer: input.employer,
+    datePosted: normalizePostedDate(input.datePosted ?? null),
+    title: normalizedTitle,
+    // roleFamily is assigned by the LLM enrichment step, not at insert time.
+    roleFamily: null,
+    employer: normalizedEmployer,
     employerUrl: input.employerUrl ?? null,
     jobUrl: input.jobUrl,
     applicationLink: input.applicationLink ?? null,
     disciplines: input.disciplines ?? null,
     deadline: input.deadline ?? null,
-    salary: input.salary ?? null,
-    location: input.location ?? null,
+    salary: normalizeSalary(input.salary),
+    location: cleanLocation || null,
     locationEvidence: serializeLocationEvidence(input.locationEvidence),
     degreeRequired: input.degreeRequired ?? null,
     starting: input.starting ?? null,
-    jobDescription: input.jobDescription ?? null,
+    jobDescription: normalizeJobDescription(input.jobDescription ?? null),
     jobType: input.jobType ?? null,
     salarySource: input.salarySource ?? null,
     salaryInterval: input.salaryInterval ?? null,
     salaryMinAmount: input.salaryMinAmount ?? null,
     salaryMaxAmount: input.salaryMaxAmount ?? null,
     salaryCurrency: input.salaryCurrency ?? null,
-    isRemote: input.isRemote ?? null,
-    jobLevel: input.jobLevel ?? null,
+    isRemote:
+      workplaceType === "remote"
+        ? true
+        : workplaceType
+          ? false
+          : (input.isRemote ?? null),
+    jobLevel: input.jobLevel ?? extractJobLevel(input.title),
     jobFunction: input.jobFunction ?? null,
     listingType: input.listingType ?? null,
     emails: input.emails ?? null,
@@ -516,7 +575,7 @@ async function insertJob(input: CreateJobInput): Promise<Job> {
     companyRating: input.companyRating ?? null,
     companyReviewsCount: input.companyReviewsCount ?? null,
     vacancyCount: input.vacancyCount ?? null,
-    workFromHomeType: input.workFromHomeType ?? null,
+    workFromHomeType: workplaceType ?? input.workFromHomeType ?? null,
     status: "discovered",
     discoveredAt: now,
     createdAt: now,
@@ -557,6 +616,10 @@ export async function createJobs(
   inputOrInputs: CreateJobInput | CreateJobInput[],
 ): Promise<Job | { created: number; skipped: number }> {
   if (!Array.isArray(inputOrInputs)) {
+    const validation = validateJobInput(inputOrInputs);
+    if (!validation.ok) {
+      throw new Error(`Invalid job input: ${validation.reason}`);
+    }
     const inserted = await tryInsertJob(inputOrInputs);
     if (inserted) return inserted;
     const existing = await getJobByUrl(inputOrInputs.jobUrl);
@@ -583,6 +646,19 @@ export async function createJobs(
 
   let created = 0;
   let skipped = 0;
+  let invalid = 0;
+
+  for (const [url, entry] of byUrl) {
+    const validation = validateJobInput(entry.input);
+    if (!validation.ok) {
+      invalid += entry.count;
+      byUrl.delete(url);
+      logger.warn(
+        `Skipping malformed job entry (url=${url || "<none>"}): ${validation.reason}`,
+      );
+    }
+  }
+  skipped += invalid;
 
   const uniqueUrls = Array.from(byUrl.keys());
   if (uniqueUrls.length === 0) {
@@ -635,9 +711,21 @@ export async function updateJob(
       throw new Error("UNIQUE constraint failed: jobs.job_url");
     }
   }
-  const { locationEvidence, ...updateFields } = input;
-  const clearsBriefForDescriptionEdit =
-    input.jobDescription !== undefined && input.jobBrief === undefined;
+  const { locationEvidence, coverLetterDetails, ...updateFields } = input;
+  // Only invalidate the JD brief when the description text actually CHANGES —
+  // not merely because an unrelated edit (e.g. the Edit-details drawer, which
+  // always echoes the description back) includes an unchanged description.
+  let clearsBriefForDescriptionEdit = false;
+  if (input.jobDescription !== undefined && input.jobBrief === undefined) {
+    const [existing] = await db
+      .select({ jobDescription: jobs.jobDescription })
+      .from(jobs)
+      .where(and(jobsScopeFilter(), eq(jobs.id, id)))
+      .limit(1);
+    clearsBriefForDescriptionEdit =
+      (normalizeJobDescription(input.jobDescription) ?? "") !==
+      (existing?.jobDescription ?? "");
+  }
   const readyAtUpdate =
     input.readyAt !== undefined
       ? { readyAt: input.readyAt }
@@ -655,9 +743,48 @@ export async function updateJob(
     .update(jobs)
     .set({
       ...updateFields,
+      // Same normalization as insertJob so edits (e.g. pasting HTML into the
+      // description box) stay consistent with discovered/manually-added jobs.
+      ...(updateFields.title !== undefined
+        ? { title: normalizeJobTitle(updateFields.title) }
+        : {}),
+      ...(updateFields.employer !== undefined
+        ? { employer: normalizeEmployer(updateFields.employer) }
+        : {}),
+      ...(updateFields.salary !== undefined
+        ? { salary: normalizeSalary(updateFields.salary) }
+        : {}),
+      ...(updateFields.location !== undefined
+        ? (() => {
+            const { location, workplaceType } = stripWorkplaceFromLocation(
+              updateFields.location,
+            );
+            return {
+              location: location || null,
+              ...(workplaceType
+                ? {
+                    workFromHomeType: workplaceType,
+                    isRemote: workplaceType === "remote",
+                  }
+                : {}),
+            };
+          })()
+        : {}),
+      ...(updateFields.jobDescription !== undefined
+        ? {
+            jobDescription: normalizeJobDescription(
+              updateFields.jobDescription,
+            ),
+          }
+        : {}),
       ...(clearsBriefForDescriptionEdit ? { jobBrief: null } : {}),
       ...(locationEvidence !== undefined
         ? { locationEvidence: serializeLocationEvidence(locationEvidence) }
+        : {}),
+      ...(coverLetterDetails !== undefined
+        ? {
+            coverLetterDetails: serializeCoverLetterDetails(coverLetterDetails),
+          }
         : {}),
       updatedAt: now,
       ...(input.status === "processing" ? { processedAt: now } : {}),
@@ -686,13 +813,30 @@ export async function finalizeGeneratedPdfIfCurrent(input: {
   ];
 
   if (input.requireGeneratedSource) {
-    conditions.push(eq(jobs.pdfSource, "generated"));
+    // Protect only an uploaded PDF from being overwritten by regeneration.
+    // A null source (e.g. after deleting an uploaded PDF) must still commit,
+    // otherwise the first generation on a ready job fails as "superseded".
+    const sourceAllowsCommit = or(
+      isNull(jobs.pdfSource),
+      eq(jobs.pdfSource, "generated"),
+    );
+    if (sourceAllowsCommit) conditions.push(sourceAllowsCommit);
   }
+
+  // A successful build moves a job to "ready" — including a discovered (Saved)
+  // job, so generating its materials promotes it. Only applied/in_progress are
+  // kept, since they must not be demoted out of their columns. The WHERE clause
+  // guarantees the current status equals expectedStatus, so preserving it is
+  // safe.
+  const nextStatus: JobStatus =
+    input.expectedStatus === "applied" || input.expectedStatus === "in_progress"
+      ? input.expectedStatus
+      : "ready";
 
   const result = await db
     .update(jobs)
     .set({
-      status: "ready",
+      status: nextStatus,
       pdfPath: input.pdfPath,
       pdfSource: "generated",
       pdfRegenerating: false,
@@ -705,6 +849,34 @@ export async function finalizeGeneratedPdfIfCurrent(input: {
     .run();
 
   if (result.changes === 0) return null;
+  return getJobById(input.id);
+}
+
+export async function setJobCoverLetter(input: {
+  id: string;
+  coverLetterPath: string;
+  source: JobPdfSource;
+  details?: CoverLetterDetails | null;
+  fingerprint?: string | null;
+}): Promise<Job | null> {
+  const now = new Date().toISOString();
+  await db
+    .update(jobs)
+    .set({
+      coverLetterPath: input.coverLetterPath,
+      coverLetterGeneratedAt: now,
+      coverLetterSource: input.source,
+      // Persisting a freshly rendered cover-letter PDF ends any regeneration.
+      coverLetterRegenerating: false,
+      updatedAt: now,
+      ...(input.details !== undefined
+        ? { coverLetterDetails: serializeCoverLetterDetails(input.details) }
+        : {}),
+      ...(input.fingerprint !== undefined
+        ? { coverLetterFingerprint: input.fingerprint }
+        : {}),
+    })
+    .where(and(jobsScopeFilter(), eq(jobs.id, input.id)));
   return getJobById(input.id);
 }
 
@@ -862,11 +1034,13 @@ function mapRowToJob(row: typeof jobs.$inferSelect): Job {
     tailoredSummary: row.tailoredSummary,
     tailoredHeadline: row.tailoredHeadline ?? null,
     tailoredSkills: row.tailoredSkills ?? null,
+    tailoredExperience: row.tailoredExperience ?? null,
+    coverageScore: row.coverageScore ?? null,
     selectedProjectIds: row.selectedProjectIds ?? null,
     pdfPath: row.pdfPath,
     pdfSource: row.pdfSource ?? null,
     pdfRegenerating: row.pdfRegenerating ?? false,
-    pdfFreshness: row.pdfRegenerating
+    resumeFreshness: row.pdfRegenerating
       ? "regenerating"
       : row.pdfSource === "uploaded"
         ? "uploaded"
@@ -875,6 +1049,21 @@ function mapRowToJob(row: typeof jobs.$inferSelect): Job {
           : "missing",
     pdfFingerprint: row.pdfFingerprint ?? null,
     pdfGeneratedAt: row.pdfGeneratedAt ?? null,
+    coverLetterPath: row.coverLetterPath ?? null,
+    coverLetterGeneratedAt: row.coverLetterGeneratedAt ?? null,
+    coverLetterSource: row.coverLetterSource ?? null,
+    coverLetterDetails: parseCoverLetterDetails(row.coverLetterDetails),
+    coverLetterFingerprint: row.coverLetterFingerprint ?? null,
+    coverLetterRegenerating: row.coverLetterRegenerating ?? false,
+    // Placeholder freshness: the authoritative "current" vs "stale" decision needs
+    // the render context (renderer/theme/profile), resolved at the API layer via
+    // applyCoverLetterFreshness. Default generated letters to "stale" so any
+    // un-refined read is conservative rather than falsely "current".
+    coverLetterFreshness: !row.coverLetterPath
+      ? "missing"
+      : row.coverLetterSource === "uploaded"
+        ? "uploaded"
+        : "stale",
     tracerLinksEnabled: row.tracerLinksEnabled ?? false,
     sponsorMatchScore: row.sponsorMatchScore ?? null,
     sponsorMatchNames: row.sponsorMatchNames ?? null,
@@ -887,6 +1076,7 @@ function mapRowToJob(row: typeof jobs.$inferSelect): Job {
     isRemote: row.isRemote ?? null,
     jobLevel: row.jobLevel ?? null,
     jobFunction: row.jobFunction ?? null,
+    roleFamily: row.roleFamily ?? null,
     listingType: row.listingType ?? null,
     emails: row.emails ?? null,
     companyIndustry: row.companyIndustry ?? null,

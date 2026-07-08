@@ -4,6 +4,18 @@ import {
 } from "@client/components/LogEventModal";
 import { PageHeader, PageMain } from "@client/components/layout";
 import {
+  DndContext,
+  type DragEndEvent,
+  DragOverlay,
+  type DragStartEvent,
+  MouseSensor,
+  TouchSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
   APPLICATION_STAGES,
   type ApplicationStage,
   type JobListItem,
@@ -96,13 +108,16 @@ export const InProgressBoardPage: React.FC = () => {
     [location.pathname, location.search],
   );
 
-  const [dragging, setDragging] = React.useState<{
-    jobId: string;
-    fromStage: ApplicationStage;
-  } | null>(null);
-  const [dropTargetStage, setDropTargetStage] =
-    React.useState<ApplicationStage | null>(null);
+  const [activeJobId, setActiveJobId] = React.useState<string | null>(null);
   const [movingJobId, setMovingJobId] = React.useState<string | null>(null);
+  // Pointer for desktop (small distance = click-vs-drag); Touch with a short
+  // press delay so list scrolling still works on iPad until you hold a card.
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 200, tolerance: 8 },
+    }),
+  );
   const [sortMode, setSortMode] = React.useState<
     "updated" | "title" | "company"
   >("updated");
@@ -193,14 +208,24 @@ export const InProgressBoardPage: React.FC = () => {
     return grouped;
   }, [cards, sortMode]);
 
-  const handleDropToStage = React.useCallback(
-    async (toStage: ApplicationStage) => {
-      if (!dragging || dragging.fromStage === toStage) {
-        setDropTargetStage(null);
-        return;
-      }
+  const activeCard = React.useMemo(
+    () =>
+      activeJobId
+        ? (BOARD_STAGES.flatMap((stage) => lanes[stage]).find(
+            (card) => card.job.id === activeJobId,
+          ) ?? null)
+        : null,
+    [activeJobId, lanes],
+  );
 
-      const { jobId } = dragging;
+  const handleDropToStage = React.useCallback(
+    async (
+      jobId: string,
+      fromStage: ApplicationStage,
+      toStage: ApplicationStage,
+    ) => {
+      if (fromStage === toStage) return;
+
       const previousCards =
         queryClient.getQueryData<BoardCard[]>(
           queryKeys.jobs.inProgressBoard(),
@@ -235,11 +260,28 @@ export const InProgressBoardPage: React.FC = () => {
         showErrorToast(error, "Failed to move stage");
       } finally {
         setMovingJobId(null);
-        setDragging(null);
-        setDropTargetStage(null);
       }
     },
-    [dragging, queryClient, transitionMutation],
+    [queryClient, transitionMutation],
+  );
+
+  const handleDragStart = React.useCallback((event: DragStartEvent) => {
+    setActiveJobId(String(event.active.id));
+  }, []);
+
+  const handleDragEnd = React.useCallback(
+    (event: DragEndEvent) => {
+      setActiveJobId(null);
+      const overId = event.over?.id;
+      if (!overId) return;
+      const fromStage = event.active.data.current?.fromStage as
+        | ApplicationStage
+        | undefined;
+      const toStage = overId as ApplicationStage;
+      if (!fromStage) return;
+      void handleDropToStage(String(event.active.id), fromStage, toStage);
+    },
+    [handleDropToStage],
   );
 
   const handleBoardLogEvent = React.useCallback(
@@ -312,94 +354,62 @@ export const InProgressBoardPage: React.FC = () => {
           </div>
         ) : (
           <div className="min-h-0 flex-1 overflow-x-auto pb-2">
-            <div className="flex h-full min-w-max items-stretch gap-4">
-              {BOARD_STAGES.map((stage) => {
-                const laneCards = lanes[stage];
-                return (
-                  <section
-                    key={stage}
-                    aria-label={`${STAGE_LABELS[stage]} lane`}
-                    onDragOver={(event) => {
-                      event.preventDefault();
-                      if (!dragging || dragging.fromStage === stage) return;
-                      setDropTargetStage(stage);
-                    }}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      void handleDropToStage(stage);
-                    }}
-                    onDragLeave={() => {
-                      if (dropTargetStage === stage) {
-                        setDropTargetStage(null);
-                      }
-                    }}
-                    className={cn(
-                      "flex h-full w-[320px] flex-col rounded-xl border border-border/70 bg-muted/30 shadow-[0_10px_24px_-20px_rgba(0,0,0,0.8)] transition-colors",
-                      dropTargetStage === stage &&
-                        "border-sky-400/70 bg-sky-500/15",
-                    )}
+            <DndContext
+              sensors={sensors}
+              onDragStart={handleDragStart}
+              onDragEnd={handleDragEnd}
+              onDragCancel={() => setActiveJobId(null)}
+            >
+              <div className="flex h-full min-w-max items-stretch gap-3">
+                {BOARD_STAGES.map((laneStage) => (
+                  <BoardLane
+                    key={laneStage}
+                    stage={laneStage}
+                    count={lanes[laneStage].length}
                   >
-                    <header
-                      className={
-                        "flex items-center justify-between border-b border-border/60 px-3 py-2.5"
-                      }
-                    >
-                      <h2 className="text-xs font-semibold tracking-[0.03em] text-foreground/90 uppercase">
-                        {STAGE_LABELS[stage]}
-                      </h2>
-                      <Badge
-                        variant="outline"
-                        className="tabular-nums border-border/50 bg-transparent text-foreground/70"
-                      >
-                        {laneCards.length}
-                      </Badge>
-                    </header>
-
-                    <div
-                      className={cn(
-                        "min-h-0 flex-1 space-y-2 p-2.5 [scrollbar-gutter:stable]",
-                        dragging ? "overflow-hidden" : "overflow-y-auto",
-                      )}
-                    >
-                      {laneCards.length === 0 ? (
-                        <div className="rounded-md border border-dashed border-border/35 bg-background/20 px-2.5 py-2 text-[11px] text-muted-foreground/80">
-                          Drop a card here or log a stage.
-                        </div>
-                      ) : (
-                        laneCards.map(({ job, latestEventAt, stage }) => (
+                    {lanes[laneStage].length === 0 ? (
+                      <div className="rounded-md border border-dashed border-border/35 bg-background/20 px-2.5 py-2 text-[11px] text-muted-foreground/80">
+                        Drop a card here or log a stage.
+                      </div>
+                    ) : (
+                      lanes[laneStage].map(({ job, latestEventAt, stage }) => (
+                        <DraggableBoardCard
+                          key={job.id}
+                          jobId={job.id}
+                          stage={laneStage}
+                          dimmed={activeJobId === job.id}
+                        >
                           <InProgressBoardCard
-                            key={job.id}
                             job={job}
                             stage={stage}
                             latestEventAt={latestEventAt}
                             jobPageLinkState={jobPageLinkState}
                             isMoving={movingJobId === job.id}
                             cardClassName={getCardLeftAccentClass(stage)}
-                            onDragStart={(event) => {
-                              if (
-                                (event.target as HTMLElement).closest(
-                                  "[data-board-card-menu]",
-                                )
-                              ) {
-                                event.preventDefault();
-                                return;
-                              }
-                              setDragging({ jobId: job.id, fromStage: stage });
-                              event.dataTransfer.effectAllowed = "move";
-                            }}
-                            onDragEnd={() => {
-                              setDragging(null);
-                              setDropTargetStage(null);
-                            }}
                             onLogEvent={() => setLogEventTarget({ job, stage })}
                           />
-                        ))
-                      )}
-                    </div>
-                  </section>
-                );
-              })}
-            </div>
+                        </DraggableBoardCard>
+                      ))
+                    )}
+                  </BoardLane>
+                ))}
+              </div>
+              <DragOverlay dropAnimation={null}>
+                {activeCard ? (
+                  <div className="w-[248px] rotate-1 cursor-grabbing">
+                    <InProgressBoardCard
+                      job={activeCard.job}
+                      stage={activeCard.stage}
+                      latestEventAt={activeCard.latestEventAt}
+                      jobPageLinkState={jobPageLinkState}
+                      isMoving={false}
+                      cardClassName={getCardLeftAccentClass(activeCard.stage)}
+                      onLogEvent={() => undefined}
+                    />
+                  </div>
+                ) : null}
+              </DragOverlay>
+            </DndContext>
           </div>
         )}
       </PageMain>
@@ -412,5 +422,66 @@ export const InProgressBoardPage: React.FC = () => {
         employer={logEventTarget?.job.employer}
       />
     </>
+  );
+};
+
+const BoardLane: React.FC<{
+  stage: BoardStage;
+  count: number;
+  children: React.ReactNode;
+}> = ({ stage, count, children }) => {
+  const { setNodeRef, isOver } = useDroppable({ id: stage });
+  return (
+    <section
+      ref={setNodeRef}
+      aria-label={`${STAGE_LABELS[stage]} lane`}
+      className={cn(
+        "flex h-full w-[264px] flex-col rounded-xl border border-border/70 bg-muted/30 shadow-[0_10px_24px_-20px_rgba(0,0,0,0.8)] transition-colors",
+        isOver && "border-sky-400/70 bg-sky-500/15",
+      )}
+    >
+      <header className="flex items-center justify-between border-b border-border/60 px-3 py-2">
+        <h2 className="text-xs font-semibold tracking-[0.03em] text-foreground/90 uppercase">
+          {STAGE_LABELS[stage]}
+        </h2>
+        <Badge
+          variant="outline"
+          className="tabular-nums border-border/50 bg-transparent text-foreground/70"
+        >
+          {count}
+        </Badge>
+      </header>
+      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto p-2 [scrollbar-gutter:stable]">
+        {children}
+      </div>
+    </section>
+  );
+};
+
+const DraggableBoardCard: React.FC<{
+  jobId: string;
+  stage: BoardStage;
+  dimmed: boolean;
+  children: React.ReactNode;
+}> = ({ jobId, stage, dimmed, children }) => {
+  const { setNodeRef, listeners, attributes, isDragging } = useDraggable({
+    id: jobId,
+    data: { fromStage: stage },
+  });
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: dnd-kit draggable wrapper
+    <div
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      role="button"
+      tabIndex={0}
+      className={cn(
+        "cursor-grab outline-none active:cursor-grabbing",
+        (isDragging || dimmed) && "opacity-40",
+      )}
+    >
+      {children}
+    </div>
   );
 };

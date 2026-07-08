@@ -15,8 +15,14 @@ async function main() {
   console.log(`   Started at: ${new Date().toISOString()}`);
   console.log("=".repeat(60));
 
+  const topN = parseInt(process.env.PIPELINE_TOP_N || "10", 10);
   const result = await runPipeline({
-    topN: parseInt(process.env.PIPELINE_TOP_N || "10", 10),
+    topN,
+    // Cost ceiling on LLM scoring; never below topN so selection can fill topN.
+    maxJobsToScore: Math.max(
+      parseInt(process.env.PIPELINE_MAX_SCORE || "60", 10),
+      topN,
+    ),
     minSuitabilityScore: parseInt(process.env.PIPELINE_MIN_SCORE || "50", 10),
   });
 

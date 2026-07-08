@@ -35,12 +35,16 @@ describe("generateJobBrief", () => {
       success: true,
       data: {
         role_summary: "Build internal platform tools.",
+        skills_and_domain_highlights: [
+          "React",
+          "Node.js",
+          "PostgreSQL",
+          "Terraform",
+        ],
+        tools_mentioned: ["Terraform"],
         they_want: ["TypeScript", "React"],
-        specifics: ["React", "Node.js", "PostgreSQL"],
         company_offers: ["Mentorship"],
-        practical_details: ["Salary: Not stated"],
         missing_or_unclear: ["Sponsorship not stated"],
-        repeated_signals: ["Collaboration"],
       },
     });
 
@@ -68,13 +72,47 @@ describe("generateJobBrief", () => {
     expect(result).toBeTruthy();
     expect(JSON.parse(result as string)).toEqual({
       role_summary: "Build internal platform tools.",
+      // Terraform is a named tool, so it is dropped from the skill highlights.
+      skills_and_domain_highlights: ["React", "Node.js", "PostgreSQL"],
+      tools_mentioned: ["Terraform"],
       they_want: ["TypeScript", "React"],
-      specifics: ["React", "Node.js", "PostgreSQL"],
       company_offers: ["Mentorship"],
-      practical_details: ["Salary: Not stated"],
+      // The brief now carries only content gaps; structural gaps are derived
+      // from the canonical job row on the client (computeStructuralGaps).
       missing_or_unclear: ["Sponsorship not stated"],
-      repeated_signals: ["Collaboration"],
     });
+  });
+
+  it("keeps only content gaps and drops LLM structural duplicates", async () => {
+    callJsonMock.mockResolvedValue({
+      success: true,
+      data: {
+        structured: {
+          company_name: "Acme GmbH",
+          location: "Berlin, Germany",
+          work_mode: "hybrid",
+          contract_type: "full-time",
+          seniority_level: "senior",
+          salary_range: "", // still unknown → keeps the salary label
+        },
+        role_summary: "Operate platform infrastructure.",
+        skills_and_domain_highlights: ["Kubernetes"],
+        tools_mentioned: [],
+        they_want: ["Go"],
+        company_offers: ["Remote budget"],
+        missing_or_unclear: [
+          "Salary not disclosed", // structural dup → filtered out
+          "Reporting line unclear", // real content gap → kept
+        ],
+      },
+    });
+
+    const result = await generateJobBrief("JD", { jobId: "job-2" });
+
+    // Structural restatements are dropped; only genuine content gaps remain.
+    expect(JSON.parse(result as string).missing_or_unclear).toEqual([
+      "Reporting line unclear",
+    ]);
   });
 
   it("returns null when the model call fails", async () => {
@@ -87,7 +125,7 @@ describe("generateJobBrief", () => {
       generateJobBrief("JD", { jobId: "job-1" }),
     ).resolves.toBeNull();
     expect(logger.warn).toHaveBeenCalledWith(
-      "Job brief extraction failed",
+      "Job extraction failed",
       expect.objectContaining({ jobId: "job-1", error: "nope" }),
     );
   });

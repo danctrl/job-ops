@@ -33,19 +33,19 @@ export const statusTokens: Record<
   { label: string; badge: string; dot: string }
 > = {
   discovered: {
-    label: "Discovered",
-    badge: "border-sky-500/30 bg-sky-500/10 text-sky-200",
-    dot: "bg-sky-400",
+    label: "Saved",
+    badge: "border-blue-500/30 bg-blue-500/10 text-blue-200",
+    dot: "bg-blue-400",
   },
   processing: {
     label: "Processing",
-    badge: "border-amber-500/30 bg-amber-500/10 text-amber-200",
-    dot: "bg-amber-400",
+    badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    dot: "bg-emerald-400",
   },
   ready: {
     label: "Ready",
-    badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
-    dot: "bg-emerald-400",
+    badge: "border-amber-500/30 bg-amber-500/10 text-amber-200",
+    dot: "bg-amber-400",
   },
   applied: {
     label: "Applied",
@@ -54,8 +54,8 @@ export const statusTokens: Record<
   },
   in_progress: {
     label: "In Progress",
-    badge: "border-cyan-500/30 bg-cyan-500/10 text-cyan-200",
-    dot: "bg-cyan-400",
+    badge: "border-emerald-500/30 bg-emerald-500/10 text-emerald-200",
+    dot: "bg-emerald-400",
   },
   skipped: {
     label: "Skipped",
@@ -201,12 +201,12 @@ export const tabs: Array<{
   label: string;
   statuses: JobStatus[];
 }> = [
-  { id: "ready", label: "Ready", statuses: ["ready", "processing"] },
   {
     id: "discovered",
-    label: "Discovered",
+    label: "Saved",
     statuses: ["discovered", "processing"],
   },
+  { id: "ready", label: "Ready", statuses: ["ready", "processing"] },
   { id: "applied", label: "Applied", statuses: ["applied"] },
   { id: "all", label: "All Jobs", statuses: [] },
 ];

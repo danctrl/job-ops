@@ -97,12 +97,14 @@ export const JobPageLeftSidebar: React.FC<JobPageLeftSidebarProps> = ({
           <div className="text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
             Application dossier
           </div>
-          <h1 className="text-2xl font-semibold leading-tight">
+          <h1 className="text-2xl font-semibold leading-tight break-words hyphens-auto">
             {job.employer}
           </h1>
-          <div className="text-sm text-muted-foreground">{job.title}</div>
+          <div className="text-sm text-muted-foreground break-words">
+            {job.title}
+          </div>
         </div>
-        <div className="flex justify-start sm:justify-end">
+        <div className="flex shrink-0 justify-start sm:justify-end">
           <ScoreRing
             score={job.suitabilityScore}
             isAwaitingAi={isAwaitingAiScore(job)}

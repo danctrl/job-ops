@@ -31,6 +31,11 @@ const makeNote = (overrides: Partial<JobNote>): JobNote => ({
   ...overrides,
 });
 
+// PdfCanvasPreview imports pdfjs-dist at module load, which fails under jsdom.
+vi.mock("@client/components/PdfCanvasPreview", () => ({
+  PdfCanvasPreview: () => null,
+}));
+
 vi.mock("@/client/components/design-resume/RichTextEditor", () => ({
   RichTextEditor: ({
     value,
@@ -278,6 +283,7 @@ const renderJobPage = (initialEntry: RouterInitialEntry = "/job/job-1/notes") =>
         <Route path="/jobs/discovered" element={<div>Discovered jobs</div>} />
         <Route path="/jobs/applied" element={<div>Applied jobs</div>} />
         <Route path="/jobs/all" element={<div>All jobs</div>} />
+        <Route path="/jobs/:tab/:jobId" element={<div>Job list</div>} />
         <Route
           path="/applications/in-progress"
           element={<div>In progress board</div>}
@@ -519,14 +525,12 @@ describe("JobPage PDF filenames", () => {
 
     renderJobPage("/job/job-1/documents");
 
-    fireEvent.click(
-      await screen.findByRole("button", { name: /download pdf/i }),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: /^download$/i }));
 
     await waitFor(() =>
       expect(privatePdf.downloadJobPdf).toHaveBeenCalledWith(
         "job-1",
-        "Mueller_Buero-Strasse_Plattform-resume.pdf",
+        "Resume_Mueller_Buero_resume.pdf",
       ),
     );
   });
@@ -568,6 +572,24 @@ describe("JobPage back navigation", () => {
       ),
     );
     expect(screen.getByText("In progress board")).toBeInTheDocument();
+  });
+
+  it("falls back to the job's own list entry so it stays selected", async () => {
+    vi.mocked(api.getJob).mockResolvedValue(
+      createJob({ status: "ready" }) as Job,
+    );
+
+    renderJobPage("/job/job-1/timeline");
+
+    expect(await screen.findByTestId("job-timeline")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("location-probe")).toHaveTextContent(
+        "/jobs/ready/job-1",
+      ),
+    );
   });
 
   it("preserves the entry page state across internal job view links", async () => {

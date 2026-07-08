@@ -76,6 +76,18 @@ const buildTerminalSignature = ({
   return `${status}:run:${runId ?? "unknown"}`;
 };
 
+// Overlay a freshly fetched full job onto its list row. JobListItem is a
+// Pick<Job>, so copying just the list item's own keys keeps the row in the
+// list's shape while picking up authoritative values (e.g. a new score).
+const projectJobListItem = (item: JobListItem, job: Job): JobListItem => {
+  const next = { ...item } as Record<string, unknown>;
+  const source = job as unknown as Record<string, unknown>;
+  for (const key of Object.keys(item)) {
+    next[key] = source[key];
+  }
+  return next as JobListItem;
+};
+
 export const useOrchestratorData = (selectedJobId: string | null) => {
   const queryClient = useQueryClient();
   const [jobListItems, setJobListItems] = useState<JobListItem[]>([]);
@@ -162,7 +174,7 @@ export const useOrchestratorData = (selectedJobId: string | null) => {
   );
 
   const loadSelectedJob = useCallback(
-    async (jobId: string) => {
+    async (jobId: string, expectedUpdatedAt?: string) => {
       const seq = ++selectedJobRequestSeqRef.current;
       try {
         const fullJob = await queryClient.fetchQuery({
@@ -171,6 +183,19 @@ export const useOrchestratorData = (selectedJobId: string | null) => {
           staleTime: 0,
         });
         selectedJobCacheRef.current.set(jobId, fullJob);
+        // The list is manually managed and its refresh is paused while a job is
+        // open, so a row can lag behind the freshly fetched detail (e.g. after a
+        // rescore). Reconcile that row so its score matches what the panel shows.
+        if (
+          expectedUpdatedAt !== undefined &&
+          fullJob.updatedAt !== expectedUpdatedAt
+        ) {
+          setJobListItems((prev) =>
+            prev.map((item) =>
+              item.id === jobId ? projectJobListItem(item, fullJob) : item,
+            ),
+          );
+        }
         if (
           selectedJobId === jobId &&
           seq === selectedJobRequestSeqRef.current
@@ -425,7 +450,7 @@ export const useOrchestratorData = (selectedJobId: string | null) => {
       return;
     }
 
-    void loadSelectedJob(selectedJobId);
+    void loadSelectedJob(selectedJobId, selectedJobListItem.updatedAt);
   }, [jobListItems, loadSelectedJob, selectedJobId]);
 
   return {

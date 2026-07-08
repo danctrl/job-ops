@@ -247,6 +247,8 @@ describe("OnboardingPage", () => {
       showSponsorInfo: true,
       renderMarkdownInJobDescriptions: true,
       autoTailorOnManualImport: true,
+      autoGenerateMaterialsForTopJobs: false,
+      showCoverageScore: true,
     });
     vi.mocked(useRxResumeConfigState).mockReturnValue({
       storedRxResume: { hasV5ApiKey: true, hasBaseUrl: true },
@@ -432,6 +434,8 @@ describe("OnboardingPage", () => {
       showSponsorInfo: true,
       renderMarkdownInJobDescriptions: true,
       autoTailorOnManualImport: true,
+      autoGenerateMaterialsForTopJobs: false,
+      showCoverageScore: true,
     });
 
     await renderPage();

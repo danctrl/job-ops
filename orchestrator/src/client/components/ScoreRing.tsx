@@ -127,7 +127,7 @@ export const ScoreRing: React.FC<{
               ) : score === null ? (
                 tokens.value
               ) : (
-                <AnimatedNumber>{Math.round(score)}</AnimatedNumber>
+                <AnimatedNumber key={jobId}>{Math.round(score)}</AnimatedNumber>
               )}
             </div>
             {size === "lg" && (
@@ -191,7 +191,9 @@ export const ScoreRing: React.FC<{
                 ) : score === null ? (
                   tokens.value
                 ) : (
-                  <AnimatedNumber>{Math.round(score)}</AnimatedNumber>
+                  <AnimatedNumber key={jobId}>
+                    {Math.round(score)}
+                  </AnimatedNumber>
                 )}
               </div>
               {size === "lg" && (

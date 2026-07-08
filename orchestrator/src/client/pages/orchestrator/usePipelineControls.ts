@@ -237,7 +237,10 @@ export function usePipelineControls(
         manual_import_source_host: imported.sourceHost ?? undefined,
       });
       await loadJobs();
-      navigateWithContext("ready", imported.jobId);
+      navigateWithContext(
+        imported.skipTailoring ? "discovered" : "ready",
+        imported.jobId,
+      );
     },
     [loadJobs, navigateWithContext],
   );

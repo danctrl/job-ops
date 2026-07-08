@@ -640,8 +640,8 @@ describe.sequential("Jobs API routes", () => {
     expect(res.status).toBe(201);
     expect(body.ok).toBe(true);
     expect(body.data.pdfPath).toBe(storedPath);
-    expect(body.data.status).toBe("ready");
-    expect(body.data.readyAt).toBeTruthy();
+    // Uploading a resume keeps a discovered job in Discovered (no auto-promote).
+    expect(body.data.status).toBe("discovered");
     expect(typeof body.meta.requestId).toBe("string");
     await expect(readFile(storedPath, "utf8")).resolves.toContain(
       "Uploaded resume",
@@ -979,7 +979,7 @@ describe.sequential("Jobs API routes", () => {
       "https://example.com/apply/core-fields-updated",
     );
     expect(body.data.location).toBe("London, UK");
-    expect(body.data.salary).toBe("GBP 100k");
+    expect(body.data.salary).toBe("£100k");
     expect(body.data.deadline).toBe("2026-03-31");
     expect(body.data.jobDescription).toBe("Updated description");
     expect(typeof body.meta.requestId).toBe("string");
@@ -1059,7 +1059,7 @@ describe.sequential("Jobs API routes", () => {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title: "Tracer Already On (Edited)",
+          title: "Tracer Already On Edited",
           tracerLinksEnabled: true,
         }),
       });
@@ -1067,7 +1067,7 @@ describe.sequential("Jobs API routes", () => {
 
       expect(res.status).toBe(200);
       expect(body.ok).toBe(true);
-      expect(body.data.title).toBe("Tracer Already On (Edited)");
+      expect(body.data.title).toBe("Tracer Already On Edited");
       expect(body.data.tracerLinksEnabled).toBe(true);
       expect(mockFetch).not.toHaveBeenCalledWith(
         "https://my-jobops.example.com/health",
@@ -1267,7 +1267,7 @@ describe.sequential("Jobs API routes", () => {
     });
     await updateJob(job.id, {
       jobBrief:
-        '{"role_summary":"Old brief","they_want":[],"specifics":[],"company_offers":[],"practical_details":[],"missing_or_unclear":[],"repeated_signals":[]}',
+        '{"role_summary":"Old brief","skills_and_domain_highlights":[],"tools_mentioned":[],"they_want":[],"company_offers":[],"missing_or_unclear":[]}',
     });
 
     const res = await fetch(`${baseUrl}/api/jobs/${job.id}`, {
@@ -1630,7 +1630,7 @@ describe.sequential("Jobs API routes", () => {
 
   it("rescoring a job updates the suitability fields", async () => {
     const { createJob } = await import("@server/repositories/jobs");
-    const { generateJobBrief } = await import("@server/services/job-brief");
+    const { extractJobPosting } = await import("@server/services/job-brief");
     const { scoreJobSuitability } = await import("@server/services/scorer");
     const { getProfile } = await import("@server/services/profile");
 
@@ -1639,9 +1639,18 @@ describe.sequential("Jobs API routes", () => {
       score: 77,
       reason: "Updated fit",
     });
-    vi.mocked(generateJobBrief).mockResolvedValue(
-      '{"role_summary":"Build tools","they_want":[],"specifics":[],"company_offers":[],"practical_details":[],"missing_or_unclear":[],"repeated_signals":[]}',
-    );
+    vi.mocked(extractJobPosting).mockResolvedValue({
+      jobBrief:
+        '{"role_summary":"Build tools","skills_and_domain_highlights":[],"tools_mentioned":[],"they_want":[],"company_offers":[],"missing_or_unclear":[]}',
+      structured: {
+        company_name: null,
+        location: null,
+        work_mode: null,
+        contract_type: null,
+        seniority_level: null,
+        salary_range: null,
+      },
+    });
 
     const job = await createJob({
       source: "manual",

@@ -14,6 +14,10 @@ import {
   shouldEnqueueTailoringAutoPdfRegeneration,
 } from "@server/services/auto-pdf-regeneration";
 import {
+  applyCoverLetterFreshness,
+  resolveCoverLetterFingerprintContext,
+} from "@server/services/cover-letter-fingerprint";
+import {
   applyJobPdfFreshness,
   type PdfFingerprintContext,
   resolvePdfFingerprintContext,
@@ -44,8 +48,14 @@ export const jobNoteSchema = z.object({
 export async function hydrateJobPdfFreshness<T extends Job>(
   job: T,
 ): Promise<T> {
-  const context = await resolvePdfFingerprintContext();
-  return applyJobPdfFreshness(job, context);
+  const [context, coverLetterContext] = await Promise.all([
+    resolvePdfFingerprintContext(),
+    resolveCoverLetterFingerprintContext(),
+  ]);
+  return applyCoverLetterFreshness(
+    applyJobPdfFreshness(job, context),
+    coverLetterContext,
+  );
 }
 
 export function hydrateJobPdfFreshnessWithContext<T extends Job>(
@@ -63,6 +73,7 @@ export function toJobListItem(
     source: job.source,
     sourceJobId: job.sourceJobId,
     title: job.title,
+    roleFamily: job.roleFamily,
     employer: job.employer,
     jobUrl: job.jobUrl,
     applicationLink: job.applicationLink,
@@ -78,7 +89,7 @@ export function toJobListItem(
     jobType: job.jobType,
     jobFunction: job.jobFunction,
     pdfRegenerating: job.pdfRegenerating,
-    pdfFreshness: job.pdfFreshness,
+    resumeFreshness: job.resumeFreshness,
     salaryMinAmount: job.salaryMinAmount,
     salaryMaxAmount: job.salaryMaxAmount,
     salaryCurrency: job.salaryCurrency,
@@ -113,6 +124,60 @@ export function queueTailoringAutoPdfRegenerationIfNeeded(
     });
   });
 }
+
+export function queueCoverLetterAutoPdfRegenerationIfNeeded(
+  previousJob: Job,
+  nextJob: Job,
+  route: string,
+): void {
+  if (!shouldEnqueueCoverLetterAutoPdfRegeneration(previousJob, nextJob)) {
+    return;
+  }
+
+  queueMicrotask(() => {
+    void enqueueAutoPdfRegenerationForJob({
+      jobId: nextJob.id,
+      reason: "cover_letter_updated",
+      requestedBy: "user",
+    }).catch((error) => {
+      logger.warn(
+        "Failed to queue cover letter auto PDF regeneration after job update",
+        { route, jobId: nextJob.id, reason: "cover_letter_updated", error },
+      );
+    });
+  });
+}
+
+export function shouldEnqueueCoverLetterAutoPdfRegeneration(
+  previousJob: Job,
+  nextJob: Job,
+): boolean {
+  // Mirror the resume gate: only auto-rebuild a generated cover letter on a
+  // ready job. Rebuild when the editable details change (body, salutation,
+  // address …) OR when a job field the letter renders changes — the recipient
+  // (employer/location) or the header position (title/tailored headline).
+  if (nextJob.status !== "ready") return false;
+  if (nextJob.coverLetterSource !== "generated") return false;
+  return (
+    JSON.stringify(previousJob.coverLetterDetails ?? null) !==
+      JSON.stringify(nextJob.coverLetterDetails ?? null) ||
+    previousJob.employer !== nextJob.employer ||
+    previousJob.location !== nextJob.location ||
+    previousJob.title !== nextJob.title ||
+    previousJob.tailoredHeadline !== nextJob.tailoredHeadline
+  );
+}
+
+export const coverLetterDetailsSchema = z
+  .object({
+    body: z.string().max(20000).optional(),
+    contactPerson: z.string().max(200).optional(),
+    companyName: z.string().max(200).optional(),
+    addressLines: z.array(z.string().max(200)).max(10).optional(),
+    salutation: z.string().max(200).optional(),
+    closing: z.string().max(200).optional(),
+  })
+  .strict();
 
 export const updateJobSchema = z.object({
   title: z.string().trim().min(1).max(500).optional(),
@@ -171,6 +236,7 @@ export const updateJobSchema = z.object({
     }),
   selectedProjectIds: z.string().optional(),
   pdfPath: z.string().optional(),
+  coverLetterDetails: coverLetterDetailsSchema.nullable().optional(),
   tracerLinksEnabled: z.boolean().optional(),
   sponsorMatchScore: z.number().min(0).max(100).optional(),
   sponsorMatchNames: z.string().optional(),

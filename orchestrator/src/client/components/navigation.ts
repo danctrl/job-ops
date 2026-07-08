@@ -20,7 +20,7 @@ export type NavLink = {
 export const NAV_LINKS: NavLink[] = [
   { to: "/overview", label: "Overview", icon: Home },
   {
-    to: "/jobs/ready",
+    to: "/jobs/discovered",
     label: "Jobs",
     icon: LayoutDashboard,
     activePaths: [

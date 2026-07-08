@@ -138,7 +138,7 @@ describe("OrchestratorFilters", () => {
   it("shows contextual tab descriptions on hover", async () => {
     renderFilters();
 
-    const discoveredTab = screen.getByRole("tab", { name: /discovered/i });
+    const discoveredTab = screen.getByRole("tab", { name: /saved/i });
     fireEvent.pointerOver(discoveredTab);
     fireEvent.pointerMove(discoveredTab);
 

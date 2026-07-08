@@ -97,6 +97,7 @@ describe("ManualImportSheet", () => {
         jobId: "job-1",
         source: "pasted_description",
         sourceHost: "example.com",
+        skipTailoring: false,
       }),
     );
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -466,6 +467,7 @@ describe("ManualImportSheet", () => {
           jobId: "job-2",
           source: "fetched_url",
           sourceHost: "jobs.example.com",
+          skipTailoring: false,
         }),
       );
     });

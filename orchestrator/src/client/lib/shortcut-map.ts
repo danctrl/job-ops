@@ -48,16 +48,16 @@ export const SHORTCUTS = {
   },
 
   // Tabs
-  tabReady: {
+  tabDiscovered: {
     key: "1",
     displayKey: "1",
-    label: "Ready tab",
+    label: "Saved tab",
     group: "tabs",
   },
-  tabDiscovered: {
+  tabReady: {
     key: "2",
     displayKey: "2",
-    label: "Discovered tab",
+    label: "Ready tab",
     group: "tabs",
   },
   tabApplied: {
